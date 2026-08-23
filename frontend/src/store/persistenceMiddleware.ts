@@ -1,4 +1,4 @@
-import { Middleware } from '@reduxjs/toolkit';
+import type { Middleware } from '@reduxjs/toolkit';
 import { db } from './db';
 
 export const persistenceMiddleware: Middleware = store => next => action => {

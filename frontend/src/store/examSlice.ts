@@ -1,5 +1,5 @@
-import { createSlice, PayloadAction, createAsyncThunk } from '@reduxjs/toolkit';
-import { db, LocalExamState } from './db';
+import { createSlice, type PayloadAction, createAsyncThunk } from '@reduxjs/toolkit';
+import { db, type LocalExamState } from './db';
 import axios from 'axios';
 
 interface ExamState {
@@ -22,10 +22,10 @@ const initialState: ExamState = {
 
 export const initializeExam = createAsyncThunk(
   'exam/initialize',
-  async ({ sessionId, userId }: { sessionId: string, userId: string }, { dispatch }) => {
+  async ({ sessionId, userId }: { sessionId: string, userId: string }) => {
     const localState = await db.examStates.get(sessionId);
     try {
-        const response = await axios.post(/api/v1/exams/start?userId= + userId);
+        const response = await axios.post(`/api/v1/exams/start?userId=` + userId);
         const serverSeed = response.data.shuffleSeed;
         
         if (localState && localState.lastUpdated > 0) {
@@ -54,7 +54,7 @@ export const syncExamData = createAsyncThunk(
         if (!state.sessionId) return;
         
         try {
-            await axios.post(/api/v1/exams/ + state.sessionId + /sync, {
+            await axios.post(`/api/v1/exams/` + state.sessionId + `/sync`, {
                 statePayload: {
                     answers: state.answers,
                     timeLeft: state.timeLeft,
