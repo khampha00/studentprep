@@ -96,6 +96,13 @@ function ExamDashboard() {
   const [currentIdx, setCurrentIdx] = useState(0);
   const currentQ = mockQuestions[currentIdx];
 
+  const handleSubmit = () => {
+    if (window.confirm('Are you sure you want to submit your exam? You cannot undo this action.')) {
+      alert("Exam submitted successfully! (This would route you to results)");
+      // Optionally reset state or redirect here
+    }
+  };
+
   return (
     <div className="min-h-screen flex flex-col">
       <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
@@ -115,7 +122,7 @@ function ExamDashboard() {
               <Clock className="w-5 h-5" />
               {formatTime(exam.timeLeft)}
             </div>
-            <button className="bg-primary text-white px-4 py-2 rounded-md font-semibold text-sm hover:bg-primary/90">Submit Final</button>
+            <button onClick={handleSubmit} className="bg-primary text-white px-4 py-2 rounded-md font-semibold text-sm hover:bg-primary/90">Submit Final</button>
           </div>
         </div>
       </header>
@@ -174,7 +181,7 @@ function ExamDashboard() {
                 </button>
               ) : (
                 <button 
-                  onClick={() => alert("Exam submitted successfully! (This would route you to results)")}
+                  onClick={handleSubmit}
                   className="px-6 py-2 bg-primary text-white rounded-md font-semibold hover:bg-primary/90">
                   Submit Final
                 </button>
