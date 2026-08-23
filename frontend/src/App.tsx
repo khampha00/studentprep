@@ -6,8 +6,22 @@ import { Clock, CheckCircle2, AlertCircle } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
+import { InlineMath } from 'react-katex';
+import 'katex/dist/katex.min.css';
+
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+function MathText({ text }: { text: string }) {
+  const parts = text.split(/\\\((.*?)\\\)/g);
+  return (
+    <span>
+      {parts.map((part, index) => 
+        index % 2 === 1 ? <InlineMath key={index} math={part} /> : <span key={index}>{part}</span>
+      )}
+    </span>
+  );
 }
 
 function RequiredAsterisk() {
@@ -101,7 +115,7 @@ function ExamDashboard() {
               <span className="bg-slate-100 text-slate-600 px-3 py-1 rounded-full text-xs font-semibold">Mathematics</span>
             </div>
             <p className="text-slate-800 text-lg leading-relaxed mb-8">
-              If a polynomial \( P(x) = x^3 - 2x^2 + kx - 4 \) is divided by \( (x - 2) \), the remainder is 0. What is the value of \( k \)?
+              <MathText text="If a polynomial \( P(x) = x^3 - 2x^2 + kx - 4 \) is divided by \( (x - 2) \), the remainder is 0. What is the value of \( k \)?" />
             </p>
             <div className="space-y-3">
               {['Option A: 2', 'Option B: 4', 'Option C: -2', 'Option D: 0'].map((opt, i) => {
