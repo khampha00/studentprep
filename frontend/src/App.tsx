@@ -72,6 +72,30 @@ function ExamDashboard() {
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
+  const mockQuestions = [
+    {
+      id: 'q1',
+      subject: 'Mathematics',
+      text: 'If a polynomial \\( P(x) = x^3 - 2x^2 + kx - 4 \\) is divided by \\( (x - 2) \\), the remainder is 0. What is the value of \\( k \\)?',
+      options: ['Option A: 2', 'Option B: 4', 'Option C: -2', 'Option D: 0']
+    },
+    {
+      id: 'q2',
+      subject: 'English',
+      text: 'Choose the word that is nearly opposite in meaning to the italicized word: His _profligate_ lifestyle led to his ruin.',
+      options: ['Option A: extravagant', 'Option B: frugal', 'Option C: generous', 'Option D: careless']
+    },
+    {
+      id: 'q3',
+      subject: 'Physics',
+      text: 'A force of 20N is applied to a mass of 5kg. What is the acceleration? (Use \\( F = ma \\))',
+      options: ['Option A: 4 m/s²', 'Option B: 100 m/s²', 'Option C: 0.25 m/s²', 'Option D: 15 m/s²']
+    }
+  ];
+
+  const [currentIdx, setCurrentIdx] = useState(0);
+  const currentQ = mockQuestions[currentIdx];
+
   return (
     <div className="min-h-screen flex flex-col">
       <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
@@ -111,31 +135,50 @@ function ExamDashboard() {
         <div className="md:col-span-3">
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 md:p-10">
             <div className="flex justify-between items-center mb-6">
-              <h3 className="text-lg font-bold text-slate-800">Question 1 of 60</h3>
-              <span className="bg-slate-100 text-slate-600 px-3 py-1 rounded-full text-xs font-semibold">Mathematics</span>
+              <h3 className="text-lg font-bold text-slate-800">Question {currentIdx + 1} of {mockQuestions.length}</h3>
+              <span className="bg-slate-100 text-slate-600 px-3 py-1 rounded-full text-xs font-semibold">{currentQ.subject}</span>
             </div>
             <p className="text-slate-800 text-lg leading-relaxed mb-8">
-              <MathText text="If a polynomial \( P(x) = x^3 - 2x^2 + kx - 4 \) is divided by \( (x - 2) \), the remainder is 0. What is the value of \( k \)?" />
+              <MathText text={currentQ.text} />
             </p>
             <div className="space-y-3">
-              {['Option A: 2', 'Option B: 4', 'Option C: -2', 'Option D: 0'].map((opt, i) => {
-                const isSelected = exam.answers['q1'] === `opt${i}`;
+              {currentQ.options.map((opt, i) => {
+                const isSelected = exam.answers[currentQ.id] === `opt${i}`;
                 return (
-                  <button key={i} onClick={() => dispatch(answerQuestion({ questionId: 'q1', optionId: `opt${i}` }))}
+                  <button key={i} onClick={() => dispatch(answerQuestion({ questionId: currentQ.id, optionId: `opt${i}` }))}
                     className={cn("w-full text-left px-5 py-4 rounded-lg border-2 transition-all", isSelected ? "border-primary bg-primary/5 shadow-sm" : "border-slate-200 hover:border-slate-300 hover:bg-slate-50")}>
                     <div className="flex items-center gap-4">
                       <div className={cn("w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0", isSelected ? "border-primary" : "border-slate-300")}>
                         {isSelected && <div className="w-3 h-3 rounded-full bg-primary" />}
                       </div>
-                      <span className="font-medium text-slate-700">{opt}</span>
+                      <span className="font-medium text-slate-700">
+                        <MathText text={opt} />
+                      </span>
                     </div>
                   </button>
                 )
               })}
             </div>
             <div className="flex justify-between mt-12 pt-6 border-t border-slate-100">
-              <button className="px-6 py-2 rounded-md font-semibold text-slate-600 hover:bg-slate-100">Previous</button>
-              <button className="px-6 py-2 bg-slate-900 text-white rounded-md font-semibold hover:bg-slate-800">Next Question</button>
+              <button 
+                onClick={() => setCurrentIdx(Math.max(0, currentIdx - 1))}
+                disabled={currentIdx === 0}
+                className="px-6 py-2 rounded-md font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-50">
+                Previous
+              </button>
+              {currentIdx < mockQuestions.length - 1 ? (
+                <button 
+                  onClick={() => setCurrentIdx(currentIdx + 1)}
+                  className="px-6 py-2 bg-slate-900 text-white rounded-md font-semibold hover:bg-slate-800">
+                  Next Question
+                </button>
+              ) : (
+                <button 
+                  onClick={() => alert("Exam submitted successfully! (This would route you to results)")}
+                  className="px-6 py-2 bg-primary text-white rounded-md font-semibold hover:bg-primary/90">
+                  Submit Final
+                </button>
+              )}
             </div>
           </div>
         </div>
