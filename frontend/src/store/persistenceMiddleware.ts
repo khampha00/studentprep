@@ -6,7 +6,7 @@ export const persistenceMiddleware: Middleware = store => next => action => {
   
   if (typeof action === 'object' && action !== null && 'type' in action) {
       const type = (action as any).type as string;
-      if (type.startsWith('exam/answerQuestion') || type === 'exam/tickTimer') {
+      if (type.startsWith('exam/answerQuestion') || type === 'exam/tickTimer' || type === 'exam/recordViolation') {
         const state = store.getState().exam;
         if (state.sessionId) {
             db.examStates.put({
@@ -15,6 +15,8 @@ export const persistenceMiddleware: Middleware = store => next => action => {
                 answers: state.answers,
                 timeLeft: state.timeLeft,
                 lastUpdated: state.lastUpdated,
+                tabSwitchCount: state.tabSwitchCount,
+                isExamTerminated: state.isExamTerminated,
                 isSynced: false
             });
         }

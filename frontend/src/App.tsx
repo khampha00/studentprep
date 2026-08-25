@@ -1,26 +1,66 @@
 import { useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import type { AppDispatch, RootState } from './store/store';
-import { initializeExam, tickTimer, answerQuestion, syncExamData } from './store/examSlice';
+import { initializeExam, tickTimer, answerQuestion, syncExamData, fetchExamPayload, recordViolation, acknowledgeWarning } from './store/examSlice';
 import { Clock, CheckCircle2, AlertCircle } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
-import { InlineMath } from 'react-katex';
 import 'katex/dist/katex.min.css';
+import ReactMarkdown from 'react-markdown';
+import remarkMath from 'remark-math';
+import remarkGfm from 'remark-gfm';
+import rehypeKatex from 'rehype-katex';
+
+import { Button } from './components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle, CardFooter } from './components/ui/card';
+import { RadioGroup, RadioGroupItem } from './components/ui/radio-group';
+import { Label } from './components/ui/label';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from './components/ui/alert-dialog';
+import { Toaster } from './components/ui/sonner';
+import { toast } from 'sonner';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-function MathText({ text }: { text: string }) {
-  const parts = text.split(/\\\((.*?)\\\)/g);
+const SubmitButton = ({ children }: { children: React.ReactNode }) => {
+  const dispatch = useDispatch<AppDispatch>();
   return (
-    <span>
-      {parts.map((part, index) => 
-        index % 2 === 1 ? <InlineMath key={index} math={part} /> : <span key={index}>{part}</span>
-      )}
-    </span>
+    <AlertDialog>
+      <AlertDialogTrigger render={<Button variant="default">{children}</Button>} />
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Submit Exam?</AlertDialogTitle>
+          <AlertDialogDescription>
+            You are about to submit your exam. This action cannot be undone. Are you sure you want to proceed?
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Go Back</AlertDialogCancel>
+          <AlertDialogAction onClick={() => {
+            dispatch(syncExamData({ isFinal: true, reason: 'NORMAL' }));
+            toast.success("Exam Submitted Successfully", { description: "Your answers have been recorded." });
+            window.scrollTo(0,0);
+          }}>Submit</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+};
+
+function RichText({ text }: { text: string }) {
+  // If the text just contains inline \(...\), we can do a simple replace to $...$ so remark-math picks it up natively!
+  const processedText = text.replace(/\\\((.*?)\\\)/g, '$$$1$$');
+  return (
+    <div className="prose prose-slate max-w-none">
+      <ReactMarkdown
+        remarkPlugins={[remarkMath, remarkGfm]}
+        rehypePlugins={[rehypeKatex]}
+      >
+        {processedText}
+      </ReactMarkdown>
+    </div>
   );
 }
 
@@ -35,20 +75,20 @@ function LoginForm({ onLogin }: { onLogin: () => void }) {
         <h1 className="text-2xl font-bold text-slate-900 mb-6 text-center">StudentPrep Portal</h1>
         <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); onLogin(); }}>
           <div className="flex flex-col gap-1">
-            <label className="flex items-start text-sm font-semibold text-slate-700">
+            <Label className="flex items-start text-slate-700">
               JAMB Registration Number <RequiredAsterisk />
-            </label>
+            </Label>
             <input type="text" required className="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent" placeholder="e.g. 12345678AB" />
           </div>
           <div className="flex flex-col gap-1">
-            <label className="flex items-start text-sm font-semibold text-slate-700">
+            <Label className="flex items-start text-slate-700">
               PIN <RequiredAsterisk />
-            </label>
+            </Label>
             <input type="password" required className="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent" placeholder="••••••••" />
           </div>
-          <button type="submit" className="w-full mt-4 bg-primary text-white font-semibold py-2.5 rounded-md hover:bg-primary/90 transition-colors">
+          <Button type="submit" className="w-full mt-4 h-11 text-base">
             Start Exam
-          </button>
+          </Button>
         </form>
       </div>
     </div>
@@ -59,10 +99,54 @@ function ExamDashboard() {
   const dispatch = useDispatch<AppDispatch>();
   const exam = useSelector((state: RootState) => state.exam);
 
+  // Anti-Cheat Engine Listener
+  useEffect(() => {
+    let debounceTimer: NodeJS.Timeout;
+    
+    const handleViolation = () => {
+      // Prevent double firing if blur and visibilitychange happen simultaneously
+      if (exam.isExamTerminated) return;
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        dispatch(recordViolation());
+      }, 300);
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') handleViolation();
+    };
+    
+    window.addEventListener('blur', handleViolation);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      window.removeEventListener('blur', handleViolation);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      clearTimeout(debounceTimer);
+    };
+  }, [dispatch, exam.isExamTerminated]);
+
+  // If exam is terminated (3 strikes), trigger final sync exactly once
+  useEffect(() => {
+    if (exam.isExamTerminated) {
+       dispatch(syncExamData({ isFinal: true, reason: 'FLAGGED_TAB_SWITCH' }));
+    }
+  }, [exam.isExamTerminated, dispatch]);
+
   useEffect(() => {
     const timer = setInterval(() => { dispatch(tickTimer()); }, 1000);
     const syncer = setInterval(() => { dispatch(syncExamData()); }, 30000);
     return () => { clearInterval(timer); clearInterval(syncer); };
+  }, [dispatch]);
+
+  // Background Flush Engine
+  useEffect(() => {
+    const handleOnline = () => {
+      // Re-attempt sync immediately when internet is restored
+      dispatch(syncExamData());
+    };
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
   }, [dispatch]);
 
   const formatTime = (seconds: number) => {
@@ -72,39 +156,45 @@ function ExamDashboard() {
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  const mockQuestions = [
-    {
-      id: 'q1',
-      subject: 'Mathematics',
-      text: 'If a polynomial \\( P(x) = x^3 - 2x^2 + kx - 4 \\) is divided by \\( (x - 2) \\), the remainder is 0. What is the value of \\( k \\)?',
-      options: ['Option A: 2', 'Option B: 4', 'Option C: -2', 'Option D: 0']
-    },
-    {
-      id: 'q2',
-      subject: 'English',
-      text: 'Choose the word that is nearly opposite in meaning to the italicized word: His _profligate_ lifestyle led to his ruin.',
-      options: ['Option A: extravagant', 'Option B: frugal', 'Option C: generous', 'Option D: careless']
-    },
-    {
-      id: 'q3',
-      subject: 'Physics',
-      text: 'A force of 20N is applied to a mass of 5kg. What is the acceleration? (Use \\( F = ma \\))',
-      options: ['Option A: 4 m/s²', 'Option B: 100 m/s²', 'Option C: 0.25 m/s²', 'Option D: 15 m/s²']
-    }
-  ];
-
+  const questions = useSelector((state: RootState) => state.exam.questions);
   const [currentIdx, setCurrentIdx] = useState(0);
-  const currentQ = mockQuestions[currentIdx];
+  const currentQ = questions[currentIdx];
 
-  const handleSubmit = () => {
-    if (window.confirm('Are you sure you want to submit your exam? You cannot undo this action.')) {
-      alert("Exam submitted successfully! (This would route you to results)");
-      // Optionally reset state or redirect here
-    }
-  };
+  if (!questions || questions.length === 0) {
+    return <div className="min-h-screen flex items-center justify-center font-bold text-slate-500">Loading Exam...</div>;
+  }
 
   return (
     <div className="min-h-screen flex flex-col">
+      {/* Anti-Cheat Modals */}
+      <AlertDialog open={exam.showWarningModal}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-destructive font-bold text-xl">Warning: Exam Environment Left</AlertDialogTitle>
+            <AlertDialogDescription className="text-base text-slate-800">
+              You have clicked outside the exam window or switched tabs. This is a violation of exam rules.<br/><br/>
+              <strong>Strikes: {exam.tabSwitchCount} / 3</strong><br/><br/>
+              If you reach 3 strikes, your exam will be automatically submitted and flagged for malpractice.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={() => dispatch(acknowledgeWarning())}>I Understand</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={exam.isExamTerminated}>
+        <AlertDialogContent className="border-2 border-destructive">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-destructive font-bold text-xl uppercase">Exam Terminated</AlertDialogTitle>
+            <AlertDialogDescription className="text-base text-slate-800 font-semibold">
+              Your exam has been forcefully submitted due to multiple rule violations (Tab Switching).<br/><br/>
+              This attempt has been flagged for administrative review.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -112,82 +202,130 @@ function ExamDashboard() {
             <h1 className="font-bold text-slate-900 text-lg">StudentPrep CBT</h1>
           </div>
           <div className="flex items-center gap-6">
-            <div className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-full">
-              {exam.syncStatus === 'synced' ? <CheckCircle2 className="w-4 h-4 text-primary" /> :
-               exam.syncStatus === 'syncing' ? <div className="w-4 h-4 rounded-full border-2 border-primary border-t-transparent animate-spin" /> :
-               <AlertCircle className="w-4 h-4 text-slate-400" />}
-              <span className="text-xs font-medium text-slate-600 uppercase tracking-wider">{exam.syncStatus}</span>
-            </div>
+              <div className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-full">
+                {exam.syncStatus === 'synced' ? <CheckCircle2 className="w-4 h-4 text-primary" /> :
+                 exam.syncStatus === 'syncing' ? <div className="w-4 h-4 rounded-full border-2 border-primary border-t-transparent animate-spin" /> :
+                 <AlertCircle className="w-4 h-4 text-orange-500" />}
+                <span className={cn("text-xs font-bold uppercase tracking-wider", exam.syncStatus === 'error' ? "text-orange-600" : "text-slate-600")}>
+                  {exam.syncStatus === 'error' ? 'Saving Locally' : exam.syncStatus}
+                </span>
+              </div>
             <div className={cn("flex items-center gap-2 font-mono text-xl font-bold px-4 py-1.5 rounded-md", exam.timeLeft < 300 ? "bg-destructive/10 text-destructive" : "bg-slate-100 text-slate-800")}>
               <Clock className="w-5 h-5" />
               {formatTime(exam.timeLeft)}
             </div>
-            <button onClick={handleSubmit} className="bg-primary text-white px-4 py-2 rounded-md font-semibold text-sm hover:bg-primary/90">Submit Final</button>
+            <SubmitButton>Submit Final</SubmitButton>
           </div>
         </div>
       </header>
 
       <main className="flex-1 max-w-6xl mx-auto w-full p-4 md:p-8 grid grid-cols-1 md:grid-cols-4 gap-8">
         <div className="md:col-span-1 space-y-6">
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
-            <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500 mb-4 border-b pb-2">Candidate Info</h2>
-            <div className="grid grid-cols-2 gap-y-2 text-sm">
-              <span className="text-slate-500">Name:</span><span className="font-semibold text-slate-900 truncate">John Doe</span>
-              <span className="text-slate-500">Reg No:</span><span className="font-semibold text-slate-900">12345678AB</span>
-              <span className="text-slate-500">Center:</span><span className="font-semibold text-slate-900">Abuja CBT-01</span>
-            </div>
-          </div>
+          <Card>
+            <CardHeader className="pb-3 border-b mb-4">
+              <CardTitle className="text-sm font-bold uppercase tracking-wider text-slate-500">Candidate Info</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 gap-y-2 text-sm">
+                <span className="text-slate-500">Name:</span><span className="font-semibold text-slate-900 truncate">John Doe</span>
+                <span className="text-slate-500">Reg No:</span><span className="font-semibold text-slate-900">12345678AB</span>
+                <span className="text-slate-500">Center:</span><span className="font-semibold text-slate-900">Abuja CBT-01</span>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="h-full flex flex-col">
+            <CardHeader className="pb-3 border-b flex flex-row items-center justify-between">
+              <CardTitle className="text-sm font-bold uppercase tracking-wider text-slate-500">Question Map</CardTitle>
+              <span className="text-xs font-medium bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full">
+                {Object.keys(exam.answers).length}/{questions.length}
+              </span>
+            </CardHeader>
+            <CardContent className="flex-1 p-4">
+              <div className="grid grid-cols-5 gap-2">
+                {questions.map((q, idx) => {
+                  const isAnswered = !!exam.answers[q.id];
+                  const isCurrent = currentIdx === idx;
+                  return (
+                    <button 
+                      key={idx}
+                      onClick={() => setCurrentIdx(idx)}
+                      className={cn(
+                        "w-10 h-10 rounded text-sm font-medium flex items-center justify-center transition-colors cursor-pointer border",
+                        isCurrent ? "border-slate-900 bg-white text-slate-900 border-2" :
+                        isAnswered ? "bg-primary text-white hover:bg-primary/90 border-primary" :
+                        "bg-slate-100 text-slate-600 hover:bg-slate-200 border-transparent"
+                      )}
+                    >
+                      {idx + 1}
+                    </button>
+                  )
+                })}
+              </div>
+            </CardContent>
+            <CardFooter className="border-t bg-slate-50 p-4 flex-col items-start space-y-2 text-xs">
+              <div className="flex items-center gap-2"><div className="w-3 h-3 bg-slate-100 border border-slate-200 rounded-sm"></div> Unanswered</div>
+              <div className="flex items-center gap-2"><div className="w-3 h-3 border-2 border-slate-900 bg-white rounded-sm"></div> Current</div>
+              <div className="flex items-center gap-2"><div className="w-3 h-3 bg-primary rounded-sm"></div> Answered</div>
+            </CardFooter>
+          </Card>
         </div>
 
         <div className="md:col-span-3">
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 md:p-10">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-lg font-bold text-slate-800">Question {currentIdx + 1} of {mockQuestions.length}</h3>
+          <Card className="p-2 md:p-4">
+            <CardHeader className="flex flex-row justify-between items-center mb-2 border-b-0">
+              <CardTitle className="text-lg font-bold text-slate-800">Question {currentIdx + 1} of {questions.length}</CardTitle>
               <span className="bg-slate-100 text-slate-600 px-3 py-1 rounded-full text-xs font-semibold">{currentQ.subject}</span>
-            </div>
-            <p className="text-slate-800 text-lg leading-relaxed mb-8">
-              <MathText text={currentQ.text} />
-            </p>
-            <div className="space-y-3">
-              {currentQ.options.map((opt, i) => {
-                const isSelected = exam.answers[currentQ.id] === `opt${i}`;
-                return (
-                  <button key={i} onClick={() => dispatch(answerQuestion({ questionId: currentQ.id, optionId: `opt${i}` }))}
-                    className={cn("w-full text-left px-5 py-4 rounded-lg border-2 transition-all", isSelected ? "border-primary bg-primary/5 shadow-sm" : "border-slate-200 hover:border-slate-300 hover:bg-slate-50")}>
-                    <div className="flex items-center gap-4">
-                      <div className={cn("w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0", isSelected ? "border-primary" : "border-slate-300")}>
-                        {isSelected && <div className="w-3 h-3 rounded-full bg-primary" />}
-                      </div>
-                      <span className="font-medium text-slate-700">
-                        <MathText text={opt} />
+            </CardHeader>
+            <CardContent>
+              <div className="text-slate-800 text-lg leading-relaxed mb-8">
+                <RichText text={currentQ.content.text || currentQ.content.passage || ''} />
+                {currentQ.content.assets && currentQ.content.assets.map((asset: any, i: number) => (
+                  asset.type === 'IMAGE' && <img key={i} src={asset.url} alt={asset.alt} className="mt-4 max-w-md rounded shadow-sm border border-slate-200" />
+                ))}
+              </div>
+              <RadioGroup 
+                value={exam.answers[currentQ.id]} 
+                onValueChange={(val) => dispatch(answerQuestion({ questionId: currentQ.id, optionId: val }))}
+                className="space-y-3"
+              >
+                {Object.entries(currentQ.content.options || {}).map(([optKey, optText], i) => {
+                  const optId = optKey;
+                  const isSelected = exam.answers[currentQ.id] === optId;
+                  return (
+                    <Label
+                      key={i}
+                      htmlFor={optId}
+                      className={cn("flex items-center gap-4 w-full text-left px-5 py-4 rounded-lg border-2 transition-all cursor-pointer", isSelected ? "border-primary bg-primary/5 shadow-sm" : "border-slate-200 hover:border-slate-300 hover:bg-slate-50")}
+                    >
+                      <RadioGroupItem value={optId} id={optId} className={cn(isSelected ? "text-primary border-primary" : "")} />
+                      <span className={cn("font-bold text-lg", isSelected ? "text-primary" : "text-slate-400")}>{optKey}</span>
+                      <span className="font-medium text-slate-700 text-base flex-1">
+                        <RichText text={String(optText)} />
                       </span>
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
-            <div className="flex justify-between mt-12 pt-6 border-t border-slate-100">
-              <button 
+                    </Label>
+                  )
+                })}
+              </RadioGroup>
+            </CardContent>
+            <CardFooter className="flex justify-between mt-6 pt-6 border-t border-slate-100">
+              <Button 
+                variant="outline"
                 onClick={() => setCurrentIdx(Math.max(0, currentIdx - 1))}
                 disabled={currentIdx === 0}
-                className="px-6 py-2 rounded-md font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-50">
+              >
                 Previous
-              </button>
-              {currentIdx < mockQuestions.length - 1 ? (
-                <button 
+              </Button>
+              {currentIdx < questions.length - 1 ? (
+                <Button 
                   onClick={() => setCurrentIdx(currentIdx + 1)}
-                  className="px-6 py-2 bg-slate-900 text-white rounded-md font-semibold hover:bg-slate-800">
+                >
                   Next Question
-                </button>
+                </Button>
               ) : (
-                <button 
-                  onClick={handleSubmit}
-                  className="px-6 py-2 bg-primary text-white rounded-md font-semibold hover:bg-primary/90">
-                  Submit Final
-                </button>
+                <SubmitButton>Submit Final</SubmitButton>
               )}
-            </div>
-          </div>
+            </CardFooter>
+          </Card>
         </div>
       </main>
     </div>
@@ -198,10 +336,16 @@ export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const dispatch = useDispatch<AppDispatch>();
 
-  const handleLogin = () => {
-    dispatch(initializeExam({ sessionId: 'mock-session-uuid', userId: 'mock-user-uuid' }));
+  const handleLogin = async () => {
+    await dispatch(initializeExam({ sessionId: '00000000-0000-0000-0000-000000000000', userId: '11111111-1111-1111-1111-111111111111' }));
+    await dispatch(fetchExamPayload());
     setIsLoggedIn(true);
   };
 
-  return isLoggedIn ? <ExamDashboard /> : <LoginForm onLogin={handleLogin} />;
+  return (
+    <>
+      {isLoggedIn ? <ExamDashboard /> : <LoginForm onLogin={handleLogin} />}
+      <Toaster position="top-center" />
+    </>
+  );
 }

@@ -7,6 +7,10 @@ export interface LocalExamState {
   lastUpdated: number; // Timestamp for conflict resolution
   timeLeft: number;
   isSynced: boolean;
+  tabSwitchCount?: number;
+  isExamTerminated?: boolean;
+  isFinal?: boolean;
+  terminationReason?: string;
 }
 
 export class StudentPrepDatabase extends Dexie {

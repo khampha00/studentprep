@@ -1,41 +1,56 @@
-import { test, expect } from '@playwright/test';
+ï»¿import { test, expect } from '@playwright/test';
 
-test('student login and dashboard rendering', async ({ page }) => {
-  await page.goto('/');
+test.describe('StudentPrep CBT Platform E2E Tests', () => {
 
-  // Expect a title "to contain" a substring.
-  await expect(page.locator('h1').filter({ hasText: 'StudentPrep Portal' })).toBeVisible();
+  test.beforeEach(async ({ page }) => {
+    // Navigate to app and log in before every test
+    await page.goto('/');
+    await expect(page.locator('h1').filter({ hasText: 'StudentPrep Portal' })).toBeVisible();
+    await page.getByPlaceholder('e.g. 12345678AB').fill('12345678AB');
+    await page.getByPlaceholder('        ').fill('password123');
+    await page.getByRole('button', { name: 'Start Exam' }).click();
+    await expect(page.locator('h1').filter({ hasText: 'StudentPrep CBT' })).toBeVisible();
+  });
 
-  // Fill login form
-  await page.getByPlaceholder('e.g. 12345678AB').fill('12345678AB');
-  await page.getByPlaceholder('••••••••').fill('password123');
-  
-  // Click Start Exam
-  await page.getByRole('button', { name: 'Start Exam' }).click();
+  test('offline resilience and data rehydration', async ({ page, context }) => {
+    await expect(page.getByText('synced', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Option A' }).first().click();
+    await context.setOffline(true);
+    await page.getByRole('button', { name: 'Next' }).click();
+    await page.getByRole('button', { name: 'Option B' }).first().click();
+    await expect(page.getByText('Saving Locally')).toBeVisible();
+    await page.reload();
+    await expect(page.locator('h1').filter({ hasText: 'StudentPrep Portal' })).toBeVisible();
+    await page.getByPlaceholder('e.g. 12345678AB').fill('12345678AB');
+    await page.getByPlaceholder('        ').fill('password123');
+    await page.getByRole('button', { name: 'Start Exam' }).click();
+    await expect(page.getByText('Saving Locally')).toBeVisible();
+    await context.setOffline(false);
+    await expect(page.getByText('synced', { exact: true })).toBeVisible({ timeout: 15000 });
+  });
 
-  // Expect dashboard to load
-  await expect(page.locator('h1').filter({ hasText: 'StudentPrep CBT' })).toBeVisible();
-
-  // Ensure candidate info is rendered
-  await expect(page.getByText('John Doe')).toBeVisible();
-
-  // Check that the question is rendered
-  await expect(page.getByText('If a polynomial')).toBeVisible();
-});
-
-test('exam offline sync resilience state test', async ({ page }) => {
-  await page.goto('/');
-  await page.getByPlaceholder('e.g. 12345678AB').fill('12345678AB');
-  await page.getByPlaceholder('••••••••').fill('password123');
-  await page.getByRole('button', { name: 'Start Exam' }).click();
-
-  // Select an option
-  await page.getByRole('button', { name: 'Option A: 2' }).click();
-
-  // State should be saved. Refresh page to test rehydration from IndexedDB
-  await page.reload();
-
-  // (In our simplified mock App.tsx, reloading logs out, but in a real app it would rehydrate)
-  // For the sake of this playwright skeleton passing in CI, we'll just check the UI again
-  await expect(page.locator('h1').filter({ hasText: 'StudentPrep Portal' })).toBeVisible();
+  test('anti-cheating tab switch termination', async ({ page }) => {
+    await expect(page.getByText('synced', { exact: true })).toBeVisible();
+    await page.evaluate(() => {
+        window.dispatchEvent(new Event('blur'));
+        document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await page.waitForTimeout(500);
+    await expect(page.getByText('You have left the exam window.')).toBeVisible();
+    await page.getByRole('button', { name: 'I Understand' }).click();
+    await page.evaluate(() => {
+        window.dispatchEvent(new Event('blur'));
+        document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await page.waitForTimeout(500);
+    await expect(page.getByText('You have left the exam window.')).toBeVisible();
+    await page.getByRole('button', { name: 'I Understand' }).click();
+    await page.evaluate(() => {
+        window.dispatchEvent(new Event('blur'));
+        document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await page.waitForTimeout(500);
+    await expect(page.getByText('Exam Terminated')).toBeVisible();
+    await expect(page.getByText('FLAGGED_TAB_SWITCH')).toBeVisible();
+  });
 });

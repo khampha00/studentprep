@@ -64,6 +64,12 @@ public class ExamService {
             throw new IllegalStateException("Cannot sync a submitted exam.");
         }
         session.setStatePayload(request.statePayload());
+        
+        if (Boolean.TRUE.equals(request.statePayload().get("isFinal"))) {
+            session.setStatus("SUBMITTED");
+            session.setEndTime(Instant.now());
+        }
+        
         sessionRepository.save(session);
     }
 
@@ -90,5 +96,30 @@ public class ExamService {
 
         // Transactional Outbox Pattern
         eventPublisher.publishEvent(new ExamSubmittedEvent(session.getId(), session.getUserId(), session.getStatePayload()));
+    }
+
+    @Transactional(readOnly = true)
+    public com.studentprep.exam.dto.ExamPayloadResponse getActivePayload() {
+        java.util.List<com.studentprep.questionbank.Question> questions = questionAPI.getActiveQuestions();
+        
+        java.util.List<Object> strippedQuestions = new java.util.ArrayList<>();
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        mapper.registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
+        
+        for (com.studentprep.questionbank.Question q : questions) {
+            Map<String, Object> map = mapper.convertValue(q, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+            Map<String, Object> content = (Map<String, Object>) map.get("content");
+            if (content != null) {
+                content.remove("correctOption");
+            }
+            strippedQuestions.add(map);
+        }
+        
+        com.studentprep.exam.dto.ExamPayloadResponse response = new com.studentprep.exam.dto.ExamPayloadResponse();
+        response.setExamId(UUID.randomUUID());
+        response.setShuffleSeed(ThreadLocalRandom.current().nextLong(1000, 9999));
+        response.setDurationMinutes(EXAM_DURATION_MINUTES);
+        response.setQuestions(strippedQuestions);
+        return response;
     }
 }

@@ -16,6 +16,13 @@ public class ExamController {
         this.examService = examService;
     }
     
+    @GetMapping("/active/payload")
+    public ResponseEntity<java.util.Map<String, Object>> getActivePayload() {
+        java.util.Map<String, Object> wrapper = new java.util.HashMap<>();
+        wrapper.put("data", examService.getActivePayload());
+        return ResponseEntity.ok(wrapper);
+    }
+    
     @PostMapping("/start")
     public ResponseEntity<ExamStartResponse> startExam(@RequestParam UUID userId) {
         return ResponseEntity.ok(examService.startExam(userId));
