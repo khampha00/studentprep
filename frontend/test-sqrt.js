@@ -11,5 +11,5 @@ unified()
   .use(remarkRehype)
   .use(rehypeKatex)
   .use(rehypeStringify)
-  .process('$ \\sqrt{1-L^2} $')
+  .process('$ \\mathsf{L^2 - \\sqrt{1-L^2}} $')
   .then((file) => console.log(String(file)));

@@ -153,3 +153,14 @@
 }
 
 
+/* Change math variables (letters) and numbers to the UI sans-serif font for maximum student readability */
+.katex .mathnormal {
+  font-family: var(--font-sans), sans-serif !important;
+}
+.katex .mord {
+  font-family: var(--font-sans), sans-serif;
+}
+/* Ensure math symbols, brackets, and operators retain their correct KaTeX fonts */
+.katex .mbin, .katex .mrel, .katex .mopen, .katex .mclose, .katex .mpunct, .katex .minner, .katex .mop, .katex .sqrt {
+  font-family: 'KaTeX_Main', 'KaTeX_Math', 'KaTeX_Size1' !important;
+}
