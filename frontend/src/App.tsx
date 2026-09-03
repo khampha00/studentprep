@@ -279,7 +279,7 @@ function ExamDashboard() {
             <CardContent>
               <div className="text-slate-800 text-lg leading-relaxed mb-8">
                 {currentQ.content.assets && currentQ.content.assets.map((asset: any, i: number) => (
-                  asset.type === 'IMAGE' && <img key={i} src={asset.url} alt={asset.alt} className="mb-4 max-w-md rounded shadow-sm border border-slate-200" />
+                  asset.type === 'IMAGE' && <img key={i} src={asset.url} alt={asset.alt} className="mb-4 max-w-md" />
                 ))}
                 <RichText text={currentQ.content.text || currentQ.content.passage || ''} />
               </div>

@@ -137,7 +137,7 @@ export default function AdminDashboard() {
                 <CardContent>
                   {q.content?.assets?.map((asset: string, i: number) => (
                     <div key={i} className="relative inline-block my-2 group w-full text-center">
-                      <img src={asset} alt="Diagram" className="max-w-full max-h-[400px] object-contain rounded border mx-auto shadow-sm" />
+                      <img src={asset} alt="Diagram" className="max-w-full max-h-[400px] object-contain mx-auto" />
                       <Button
                         variant="destructive"
                         size="icon"
