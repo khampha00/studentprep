@@ -136,3 +136,16 @@
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
 }
+/* KaTeX Tailwind Compatibility Fixes */
+.katex * {
+  border-color: currentColor !important;
+}
+.katex .frac-line {
+  border-bottom-width: 0.04em !important;
+}
+.katex {
+  line-height: normal !important;
+}
+.katex-display {
+  margin: 1em 0 !important;
+}
