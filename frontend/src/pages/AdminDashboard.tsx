@@ -11,6 +11,7 @@ export default function AdminDashboard() {
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
+  const [originalQuestionBackup, setOriginalQuestionBackup] = useState<any>(null);
 
   useEffect(() => {
     fetchDraftQuestions();
@@ -231,12 +232,27 @@ export default function AdminDashboard() {
                     </Select>
                   </div>
                 </CardContent>
-                <CardFooter className="flex justify-end gap-2">
-                  {editingQuestionId === q.id ? (
-                    <Button variant="outline" onClick={() => setEditingQuestionId(null)}>Save</Button>
-                  ) : (
-                    <Button variant="outline" onClick={() => setEditingQuestionId(q.id)}>Edit</Button>
-                  )}
+                  <CardFooter className="flex justify-end gap-2">
+                    {editingQuestionId === q.id ? (
+                      <>
+                        <Button variant="outline" onClick={() => {
+                          const updated = [...questions];
+                          updated[idx] = originalQuestionBackup;
+                          setQuestions(updated);
+                          setEditingQuestionId(null);
+                          setOriginalQuestionBackup(null);
+                        }}>Cancel</Button>
+                        <Button variant="outline" className="border-[#008751] text-[#008751]" onClick={() => {
+                          setEditingQuestionId(null);
+                          setOriginalQuestionBackup(null);
+                        }}>Save</Button>
+                      </>
+                    ) : (
+                      <Button variant="outline" onClick={() => {
+                        setOriginalQuestionBackup(JSON.parse(JSON.stringify(q)));
+                        setEditingQuestionId(q.id);
+                      }}>Edit</Button>
+                    )}
                   <Button variant="outline" className="text-destructive" onClick={() => handleReject(q)}>Reject</Button>
                   <Button className="bg-[#008751]" onClick={() => handleApprove(q)}>Approve</Button>
                 </CardFooter>
