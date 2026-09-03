@@ -11,6 +11,10 @@ interface MathTextProps {
 }
 
 export function MathText({ content, className = '' }: MathTextProps) {
+  // Replace \frac with \dfrac to force display style (spaced out) fractions
+  // even in inline math contexts, preventing them from looking squished.
+  const processedContent = content ? content.replace(/\\frac/g, '\\dfrac') : '';
+
   return (
     <div className={`prose prose-sm prose-slate max-w-none ${className}`}>
       <ReactMarkdown
@@ -32,7 +36,7 @@ export function MathText({ content, className = '' }: MathTextProps) {
           }
         ]}
       >
-        {content}
+        {processedContent}
       </ReactMarkdown>
     </div>
   );
