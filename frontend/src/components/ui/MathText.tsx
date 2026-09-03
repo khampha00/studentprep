@@ -20,7 +20,7 @@ export function MathText({ content, className = '' }: MathTextProps) {
           () => (tree) => {
             const walk = (node: any) => {
               if (node.type === 'element' && node.properties && node.properties.className) {
-                if (Array.isArray(node.properties.className) && node.properties.className.includes('math')) {
+                if (Array.isArray(node.properties.className) && node.properties.className.includes('katex')) {
                   node.properties.className.push('not-prose');
                 }
               }
