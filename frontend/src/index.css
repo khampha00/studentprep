@@ -139,13 +139,15 @@
 /* KaTeX Tailwind Compatibility Fixes */
 .katex * {
   border-color: currentColor !important;
+  box-sizing: content-box !important;
 }
 .katex .frac-line {
   border-bottom-width: 0.04em !important;
 }
 .katex {
-  line-height: normal !important;
+  line-height: 1.2 !important;
 }
 .katex-display {
   margin: 1em 0 !important;
 }
+
