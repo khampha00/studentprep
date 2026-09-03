@@ -135,9 +135,6 @@ export default function AdminDashboard() {
               <Card key={q.id}>
                 <CardHeader><CardTitle className="text-lg">Question #{idx + 1}</CardTitle></CardHeader>
                 <CardContent>
-                  <div className="font-semibold mb-4">
-                    <MathText content={q.content?.text || ''} />
-                  </div>
                   {q.content?.assets?.map((asset: string, i: number) => (
                     <div key={i} className="relative inline-block my-2 group w-full text-center">
                       <img src={asset} alt="Diagram" className="max-w-full max-h-[400px] object-contain rounded border mx-auto shadow-sm" />
@@ -162,6 +159,10 @@ export default function AdminDashboard() {
                       + Add Image
                       <input type="file" accept="image/*" className="hidden" onChange={(e) => handleAddAsset(idx, e)} />
                     </label>
+                  </div>
+
+                  <div className="font-semibold mb-4 mt-4">
+                    <MathText content={q.content?.text || ''} />
                   </div>
 
                   <div className="mt-4 space-y-3">

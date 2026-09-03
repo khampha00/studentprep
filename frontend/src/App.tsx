@@ -278,10 +278,10 @@ function ExamDashboard() {
             </CardHeader>
             <CardContent>
               <div className="text-slate-800 text-lg leading-relaxed mb-8">
-                <RichText text={currentQ.content.text || currentQ.content.passage || ''} />
                 {currentQ.content.assets && currentQ.content.assets.map((asset: any, i: number) => (
-                  asset.type === 'IMAGE' && <img key={i} src={asset.url} alt={asset.alt} className="mt-4 max-w-md rounded shadow-sm border border-slate-200" />
+                  asset.type === 'IMAGE' && <img key={i} src={asset.url} alt={asset.alt} className="mb-4 max-w-md rounded shadow-sm border border-slate-200" />
                 ))}
+                <RichText text={currentQ.content.text || currentQ.content.passage || ''} />
               </div>
               <RadioGroup 
                 value={exam.answers[currentQ.id]} 
