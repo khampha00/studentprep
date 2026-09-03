@@ -10,6 +10,7 @@ export default function AdminDashboard() {
   const [questions, setQuestions] = useState<any[]>([]);
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchDraftQuestions();
@@ -48,7 +49,17 @@ export default function AdminDashboard() {
       toast.success('Question Approved');
       setQuestions(questions.filter(x => x.id !== q.id));
     } catch (e) {
-      toast.error('Approval failed');
+      toast.error('Failed to approve question');
+    }
+  };
+
+  const handleReject = async (q: any) => {
+    try {
+      await axios.delete('/api/v1/admin/questions/' + q.id);
+      toast.success('Question Rejected and Deleted');
+      setQuestions(questions.filter(x => x.id !== q.id));
+    } catch (e) {
+      toast.error('Failed to reject question');
     }
   };
 
@@ -162,7 +173,19 @@ export default function AdminDashboard() {
                   </div>
 
                   <div className="font-semibold mb-4 mt-4">
-                    <MathText content={q.content?.text || ''} />
+                    {editingQuestionId === q.id ? (
+                      <textarea
+                        className="w-full min-h-[100px] p-3 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#008751]"
+                        value={q.content?.text || ''}
+                        onChange={(e) => {
+                          const updated = [...questions];
+                          updated[idx].content.text = e.target.value;
+                          setQuestions(updated);
+                        }}
+                      />
+                    ) : (
+                      <MathText content={q.content?.text || ''} />
+                    )}
                   </div>
 
                   <div className="mt-4 space-y-3">
@@ -170,7 +193,19 @@ export default function AdminDashboard() {
                       <div key={k} className="flex gap-3 items-start p-2 rounded-md hover:bg-slate-50 border border-transparent">
                         <span className="font-bold shrink-0 mt-0.5 w-6">{k}:</span>
                         <div className="flex-1">
-                          <MathText content={String(v)} />
+                          {editingQuestionId === q.id ? (
+                            <input
+                              className="w-full p-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#008751]"
+                              value={String(v)}
+                              onChange={(e) => {
+                                const updated = [...questions];
+                                updated[idx].content.options[k] = e.target.value;
+                                setQuestions(updated);
+                              }}
+                            />
+                          ) : (
+                            <MathText content={String(v)} />
+                          )}
                         </div>
                       </div>
                     ))}
@@ -197,7 +232,12 @@ export default function AdminDashboard() {
                   </div>
                 </CardContent>
                 <CardFooter className="flex justify-end gap-2">
-                  <Button variant="outline" className="text-destructive">Reject</Button>
+                  {editingQuestionId === q.id ? (
+                    <Button variant="outline" onClick={() => setEditingQuestionId(null)}>Save</Button>
+                  ) : (
+                    <Button variant="outline" onClick={() => setEditingQuestionId(q.id)}>Edit</Button>
+                  )}
+                  <Button variant="outline" className="text-destructive" onClick={() => handleReject(q)}>Reject</Button>
                   <Button className="bg-[#008751]" onClick={() => handleApprove(q)}>Approve</Button>
                 </CardFooter>
               </Card>

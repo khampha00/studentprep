@@ -28,4 +28,10 @@ public class QuestionController {
             return ResponseEntity.ok(repository.save(q));
         }).orElse(ResponseEntity.notFound().build());
     }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteQuestion(@PathVariable UUID id) {
+        repository.deleteById(id);
+        return ResponseEntity.noContent().build();
+    }
 }
