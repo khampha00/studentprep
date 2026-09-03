@@ -11,9 +11,11 @@ interface MathTextProps {
 }
 
 export function MathText({ content, className = '' }: MathTextProps) {
-  // Replace \frac with \dfrac to force display style (spaced out) fractions
-  // even in inline math contexts, preventing them from looking squished.
-  const processedContent = content ? content.replace(/\\frac/g, '\\dfrac') : '';
+  // 1. Replace \frac with \dfrac for spacious fractions
+  // 2. Add \mathstrut inside \sqrt to fix the KaTeX bug where the root line intersects superscripts
+  const processedContent = content 
+    ? content.replace(/\\frac/g, '\\dfrac').replace(/\\sqrt\{/g, '\\sqrt{\\mathstrut ')
+    : '';
 
   return (
     <div className={`prose prose-sm prose-slate max-w-none ${className}`}>
