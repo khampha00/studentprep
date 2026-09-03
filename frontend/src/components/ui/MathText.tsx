@@ -15,7 +15,22 @@ export function MathText({ content, className = '' }: MathTextProps) {
     <div className={`prose prose-sm prose-slate max-w-none ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkMath, remarkGfm]}
-        rehypePlugins={[rehypeKatex]}
+        rehypePlugins={[
+          rehypeKatex,
+          () => (tree) => {
+            const walk = (node: any) => {
+              if (node.type === 'element' && node.properties && node.properties.className) {
+                if (Array.isArray(node.properties.className) && node.properties.className.includes('math')) {
+                  node.properties.className.push('not-prose');
+                }
+              }
+              if (node.children) {
+                node.children.forEach(walk);
+              }
+            };
+            walk(tree);
+          }
+        ]}
       >
         {content}
       </ReactMarkdown>
