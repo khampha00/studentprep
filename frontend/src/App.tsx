@@ -332,9 +332,15 @@ function ExamDashboard() {
   );
 }
 
+import AdminDashboard from './pages/AdminDashboard';
+
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const dispatch = useDispatch<AppDispatch>();
+
+  if (window.location.pathname === '/admin') {
+    return <AdminDashboard />;
+  }
 
   const handleLogin = async () => {
     await dispatch(initializeExam({ sessionId: '00000000-0000-0000-0000-000000000000', userId: '11111111-1111-1111-1111-111111111111' }));

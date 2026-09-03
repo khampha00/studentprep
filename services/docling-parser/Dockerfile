@@ -8,8 +8,11 @@ RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install docling and FastAPI
-RUN pip install --no-cache-dir docling "fastapi[standard]"
+# Install docling, python-multipart and FastAPI
+RUN pip install --no-cache-dir docling "fastapi[standard]" python-multipart boto3
 
-# Temporary sleep to keep container alive until the domain-logic-implementer writes the python server code
-CMD ["sleep", "infinity"]
+# Copy the server code
+COPY main.py .
+
+# Run the FastAPI server
+CMD ["fastapi", "run", "main.py", "--host", "0.0.0.0", "--port", "8000"]

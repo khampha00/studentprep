@@ -1,0 +1,137 @@
+```json
+[
+  {
+    "type": "MCQ",
+    "text": "If $M$ represents the median and $D$ the mode of the measurements $5, 9, 3, 5, 8$, then $(M, D)$ is:",
+    "options": {
+      "A": "$(6, 5)$",
+      "B": "$(5, 8)$",
+      "C": "$(5, 7)$",
+      "D": "$(5, 5)$",
+      "E": "$(7, 5)$"
+    },
+    "correctOption": "D",
+    "assets": []
+  },
+  {
+    "type": "MCQ",
+    "text": "A construction company is owned by two partners $X$ and $Y$ and it is agreed that their profit will be divided in the ratio $4:5$. At the end of the year, $Y$ received $\\text{₦}5,000$ more than $X$. What is the total profit of the company for the year?",
+    "options": {
+      "A": "$\\text{₦}20,000.00$",
+      "B": "$\\text{₦}25,000.00$",
+      "C": "$\\text{₦}30,000.00$",
+      "D": "$\\text{₦}15,000.00$",
+      "E": "$\\text{₦}45,000.00$"
+    },
+    "correctOption": "E",
+    "assets": []
+  },
+  {
+    "type": "MCQ",
+    "text": "Given a regular hexagon, calculate each interior angle of the hexagon.",
+    "options": {
+      "A": "$60^\\circ$",
+      "B": "$30^\\circ$",
+      "C": "$120^\\circ$",
+      "D": "$45^\\circ$",
+      "E": "$135^\\circ$"
+    },
+    "correctOption": "C",
+    "assets": []
+  },
+  {
+    "type": "MCQ",
+    "text": "Solve the following equations: $4x - 3 = 3x + y = 2y + 5x - 12$",
+    "options": {
+      "A": "$x = 5, y = 2$",
+      "B": "$x = 2, y = 5$",
+      "C": "$x = -2, y = -5$",
+      "D": "$x = 5, y = -2$",
+      "E": "$x = -5, y = -2$"
+    },
+    "correctOption": "A",
+    "assets": []
+  },
+  {
+    "type": "MCQ",
+    "text": "If $x = 1$ is a root of the equation $x^3 - 2x^2 - 5x + 6 = 0$, find the other roots.",
+    "options": {
+      "A": "$-3$ and $2$",
+      "B": "$-2$ and $2$",
+      "C": "$3$ and $-2$",
+      "D": "$1$ and $3$",
+      "E": "$-3$ and $1$"
+    },
+    "correctOption": "C",
+    "assets": []
+  },
+  {
+    "type": "MCQ",
+    "text": "If $x$ is jointly proportional to the cube of $y$ and the fourth power of $z$, in what ratio is $x$ increased or decreased when $y$ is halved and $z$ is doubled?",
+    "options": {
+      "A": "$4:1$ increase",
+      "B": "$2:1$ increase",
+      "C": "$1:4$ decrease",
+      "D": "$1:1$ no change",
+      "E": "$3:4$ decrease"
+    },
+    "correctOption": "B",
+    "assets": []
+  },
+  {
+    "type": "MCQ",
+    "text": "In the figure above, $\\angle PQR = 60^\\circ$, $\\angle QPR = 90^\\circ$, $\\angle PRS = 90^\\circ$, $\\angle RPS = 45^\\circ$, and $QR = 8\\text{ cm}$. Determine $PS$.",
+    "options": {
+      "A": "$2\\sqrt{3}\\text{ cm}$",
+      "B": "$4\\sqrt{6}\\text{ cm}$",
+      "C": "$2\\sqrt{6}\\text{ cm}$",
+      "D": "$8\\sqrt{6}\\text{ cm}$",
+      "E": "$8\\text{ cm}$"
+    },
+    "correctOption": "B",
+    "assets": [
+      "http://localhost:9000/studentprep-assets/diagrams/f085fed4-c987-40fe-a525-88fb4988fd40.png"
+    ]
+  },
+  {
+    "type": "MCQ",
+    "text": "Given that $\\cos z = L$, where $z$ is an acute angle, find an expression for $\\sec z + \\tan z$.",
+    "options": {
+      "A": "$\\frac{1 - L}{\\sqrt{1 - L^2}}$",
+      "B": "$\\frac{1 + L}{\\sqrt{1 - L^2}}$",
+      "C": "$\\frac{\\sqrt{1 - L^2}}{1 + L}$",
+      "D": "$\\frac{\\sqrt{1 - L^2}}{1 - L}$",
+      "E": "$\\frac{L}{\\sqrt{1 - L^2}}$"
+    },
+    "correctOption": "B",
+    "assets": []
+  },
+  {
+    "type": "MCQ",
+    "text": "If $0.0000152 \\times 0.00042 = A \\times 10^B$, where $1 \\le A < 10$, find $A$ and $B$.",
+    "options": {
+      "A": "$A = 9, B = 6.38$",
+      "B": "$A = 6.38, B = -9$",
+      "C": "$A = 6.38, B = 9$",
+      "D": "$A = 6.38, B = -1$",
+      "E": "$A = 6.38, B = 1$"
+    },
+    "correctOption": "B",
+    "assets": []
+  },
+  {
+    "type": "MCQ",
+    "text": "If $x + 2$ and $x - 1$ are factors of the expression $l x^3 + 2k x^2 + 24$, find the values of $l$ and $k$.",
+    "options": {
+      "A": "$l = -6, k = -9$",
+      "B": "$l = -2, k = 1$",
+      "C": "$l = -2, k = -1$",
+      "D": "$l = 0, k = 1$",
+      "E": "$l = 6, k = 0$"
+    },
+    "correctOption": "A",
+    "assets": []
+  },
+  {
+    "type": "MCQ",
+    "text": "Make $T$ the subject of the equation $
