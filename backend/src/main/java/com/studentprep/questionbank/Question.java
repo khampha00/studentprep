@@ -11,12 +11,17 @@ import org.hibernate.annotations.Type;
 
 import java.util.Map;
 
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.JoinColumn;
+
 @Getter
 @Setter
 @Entity
 @Table(name = "questions")
 public class Question extends BaseEntity {
-    private String subject;
+    @ManyToOne
+    @JoinColumn(name = "subject_id")
+    private Subject subject;
     private String topic;
     private String status;
 

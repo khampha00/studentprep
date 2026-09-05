@@ -1,30 +1,41 @@
 package com.studentprep.ingestion;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.client.RestClient;
-import org.springframework.core.io.Resource;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.http.MediaType;
 import java.util.Map;
+import java.util.UUID;
+
+import com.studentprep.ingestion.job.IngestionJob;
+import com.studentprep.ingestion.job.IngestionJobRepository;
+import com.studentprep.ingestion.job.IngestionJobStatus;
+import com.studentprep.questionbank.Subject;
+import com.studentprep.questionbank.SubjectRepository;
 
 @RestController
 @RequestMapping("/api/v1/admin/ingest")
 public class IngestionController {
 
-    private final LlmStructuringService llmStructuringService;
     private final RestClient restClient;
-    private final com.studentprep.questionbank.QuestionRepository questionRepository;
+    private final SubjectRepository subjectRepository;
     private final S3Service s3Service;
+    private final AsyncIngestionWorker asyncIngestionWorker;
+    private final IngestionJobRepository ingestionJobRepository;
 
-    public IngestionController(LlmStructuringService llmStructuringService, RestClient.Builder restClientBuilder, com.studentprep.questionbank.QuestionRepository questionRepository, S3Service s3Service) {
-        this.llmStructuringService = llmStructuringService;
+    public IngestionController(RestClient.Builder restClientBuilder, 
+                               SubjectRepository subjectRepository, 
+                               S3Service s3Service,
+                               AsyncIngestionWorker asyncIngestionWorker,
+                               IngestionJobRepository ingestionJobRepository) {
         this.restClient = restClientBuilder.build();
-        this.questionRepository = questionRepository;
+        this.subjectRepository = subjectRepository;
         this.s3Service = s3Service;
+        this.asyncIngestionWorker = asyncIngestionWorker;
+        this.ingestionJobRepository = ingestionJobRepository;
     }
 
     @PostMapping("/assets")
@@ -38,8 +49,11 @@ public class IngestionController {
     }
 
     @PostMapping("/pdf")
-    public ResponseEntity<JsonNode> ingestPdf(@RequestParam("file") MultipartFile file) {
+    public ResponseEntity<Map<String, UUID>> ingestPdf(@RequestParam("file") MultipartFile file, @RequestParam("subjectId") UUID subjectId) {
         try {
+            Subject subject = subjectRepository.findById(subjectId)
+                    .orElseThrow(() -> new RuntimeException("Subject not found"));
+
             // Step 1: Forward MultipartFile to Python docling-parser container
             MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
             body.add("file", file.getResource());
@@ -55,30 +69,25 @@ public class IngestionController {
 
             String markdown = response.get("markdown");
 
-            // Step 2 & 3: Send Markdown to LLM
-            JsonNode structuredQuestions = llmStructuringService.structureMarkdown(markdown);
-            
-            // Step 4: Save structured JSON to QuestionRepository
-            if (structuredQuestions.isArray()) {
-                for (JsonNode qNode : structuredQuestions) {
-                    com.studentprep.questionbank.Question q = new com.studentprep.questionbank.Question();
-                    q.setStatus("DRAFT");
-                    q.setSubject("General"); // Can be inferred by LLM later
-                    
-                    // Convert JsonNode to Map
-                    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-                    java.util.Map<String, Object> contentMap = mapper.convertValue(qNode, new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<String, Object>>() {});
-                    q.setContent(contentMap);
-                    
-                    questionRepository.save(q);
-                }
-            }
+            IngestionJob job = new IngestionJob();
+            job.setSubject(subject);
+            job.setStatus(IngestionJobStatus.PENDING);
+            ingestionJobRepository.save(job);
 
-            return ResponseEntity.ok(structuredQuestions);
+            asyncIngestionWorker.processMarkdown(job.getId(), subject.getId(), markdown);
+
+            return ResponseEntity.accepted().body(Map.of("jobId", job.getId()));
             
         } catch (Exception e) {
             e.printStackTrace();
-            throw new RuntimeException("Ingestion failed: " + e.getMessage());
+            throw new RuntimeException("Ingestion initialization failed: " + e.getMessage());
         }
+    }
+
+    @GetMapping("/jobs/{jobId}")
+    public ResponseEntity<IngestionJob> getJobStatus(@PathVariable UUID jobId) {
+        return ingestionJobRepository.findById(jobId)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
     }
 }

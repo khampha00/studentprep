@@ -31,6 +31,9 @@ security:
     secret: ${JWT_SECRET}
     expiration-ms: ${JWT_EXPIRATION_MS}
 
+gemini:
+  model: ${GEMINI_MODEL:gemini-3.5-flash-lite}
+
 server:
   port: 8080
   error:

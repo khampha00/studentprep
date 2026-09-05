@@ -7,6 +7,6 @@ public class QuestionService implements QuestionInternalAPI {
     public QuestionService(QuestionRepository repository) { this.repository = repository; }
     @Override
     public List<Question> getActiveQuestions() {
-        return repository.findByStatus("ACTIVE");
+        return repository.findByStatusOrderByCreatedAtAsc("ACTIVE");
     }
 }

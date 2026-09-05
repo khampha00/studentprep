@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import type { AppDispatch, RootState } from './store/store';
 import { initializeExam, tickTimer, answerQuestion, syncExamData, fetchExamPayload, recordViolation, acknowledgeWarning } from './store/examSlice';
 import { Clock, CheckCircle2, AlertCircle } from 'lucide-react';
@@ -50,7 +51,6 @@ const SubmitButton = ({ children }: { children: React.ReactNode }) => {
 };
 
 function RichText({ text }: { text: string }) {
-  // If the text just contains inline \(...\), we can do a simple replace to $...$ so remark-math picks it up natively!
   const processedText = text.replace(/\\\((.*?)\\\)/g, '$$$1$$');
   return (
     <div className="prose prose-slate max-w-none">
@@ -99,12 +99,10 @@ function ExamDashboard() {
   const dispatch = useDispatch<AppDispatch>();
   const exam = useSelector((state: RootState) => state.exam);
 
-  // Anti-Cheat Engine Listener
   useEffect(() => {
-    let debounceTimer: NodeJS.Timeout;
+    let debounceTimer: ReturnType<typeof setTimeout>;
     
     const handleViolation = () => {
-      // Prevent double firing if blur and visibilitychange happen simultaneously
       if (exam.isExamTerminated) return;
       clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
@@ -126,7 +124,6 @@ function ExamDashboard() {
     };
   }, [dispatch, exam.isExamTerminated]);
 
-  // If exam is terminated (3 strikes), trigger final sync exactly once
   useEffect(() => {
     if (exam.isExamTerminated) {
        dispatch(syncExamData({ isFinal: true, reason: 'FLAGGED_TAB_SWITCH' }));
@@ -139,10 +136,8 @@ function ExamDashboard() {
     return () => { clearInterval(timer); clearInterval(syncer); };
   }, [dispatch]);
 
-  // Background Flush Engine
   useEffect(() => {
     const handleOnline = () => {
-      // Re-attempt sync immediately when internet is restored
       dispatch(syncExamData());
     };
     window.addEventListener('online', handleOnline);
@@ -166,7 +161,6 @@ function ExamDashboard() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      {/* Anti-Cheat Modals */}
       <AlertDialog open={exam.showWarningModal}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -332,26 +326,74 @@ function ExamDashboard() {
   );
 }
 
-import AdminDashboard from './pages/AdminDashboard';
-
-export default function App() {
+function StudentApp() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const dispatch = useDispatch<AppDispatch>();
-
-  if (window.location.pathname === '/admin') {
-    return <AdminDashboard />;
-  }
-
   const handleLogin = async () => {
     await dispatch(initializeExam({ sessionId: '00000000-0000-0000-0000-000000000000', userId: '11111111-1111-1111-1111-111111111111' }));
     await dispatch(fetchExamPayload());
     setIsLoggedIn(true);
   };
+  return isLoggedIn ? <ExamDashboard /> : <LoginForm onLogin={handleLogin} />;
+}
 
+import axios from 'axios';
+import AdminLayout from './layouts/AdminLayout';
+import AdminDashboard from './pages/admin/AdminDashboard';
+import SubjectList from './pages/admin/SubjectList';
+import SubjectDetail from './pages/admin/SubjectDetail';
+import AdminLogin from './pages/AdminLogin';
+
+axios.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token');
+  if (token && config.url?.startsWith('/api')) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+axios.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response && (error.response.status === 401 || error.response.status === 403)) {
+      if (window.location.pathname.startsWith('/admin')) {
+        localStorage.removeItem('token');
+        window.location.href = '/admin'; // Force them back to the login screen
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
+function AdminProtectedRoute({ children }: { children: React.ReactNode }) {
+  const token = localStorage.getItem('token');
+  if (!token) {
+    return <AdminLogin />;
+  }
+  return <>{children}</>;
+}
+
+export default function App() {
   return (
-    <>
-      {isLoggedIn ? <ExamDashboard /> : <LoginForm onLogin={handleLogin} />}
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<StudentApp />} />
+        
+        <Route 
+          path="/admin" 
+          element={
+            <AdminProtectedRoute>
+              <AdminLayout />
+            </AdminProtectedRoute>
+          }
+        >
+          <Route index element={<AdminDashboard />} />
+          <Route path="subjects" element={<SubjectList />} />
+          <Route path="subjects/:id" element={<SubjectDetail />} />
+          <Route path="students" element={<div className="p-8"><h1 className="text-3xl font-bold">Students (Coming Soon)</h1></div>} />
+        </Route>
+      </Routes>
       <Toaster position="top-center" />
-    </>
+    </BrowserRouter>
   );
 }

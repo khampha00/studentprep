@@ -16,8 +16,13 @@ public class QuestionController {
     }
 
     @GetMapping
-    public ResponseEntity<List<Question>> getQuestionsByStatus(@RequestParam(defaultValue = "DRAFT") String status) {
-        return ResponseEntity.ok(repository.findByStatus(status));
+    public ResponseEntity<List<Question>> getQuestionsByStatus(
+            @RequestParam(defaultValue = "DRAFT") String status,
+            @RequestParam(required = false) UUID subjectId) {
+        if (subjectId != null) {
+            return ResponseEntity.ok(repository.findByStatusAndSubjectIdOrderByCreatedAtAsc(status, subjectId));
+        }
+        return ResponseEntity.ok(repository.findByStatusOrderByCreatedAtAsc(status));
     }
 
     @PutMapping("/{id}")

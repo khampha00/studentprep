@@ -1,4 +1,4 @@
-import React from 'react';
+// React import removed due to unused variable TS error
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
