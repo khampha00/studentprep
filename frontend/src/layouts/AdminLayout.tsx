@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Outlet, NavLink, useNavigate } from 'react-router-dom';
+import { Outlet, NavLink } from 'react-router-dom';
 import { LayoutDashboard, BookOpen, Users, LogOut, ChevronLeft, ChevronRight } from 'lucide-react';
 import {
   AlertDialog,
@@ -14,7 +14,6 @@ import {
 } from '../components/ui/alert-dialog';
 
 export default function AdminLayout() {
-  const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   const handleLogout = () => {
@@ -79,7 +78,7 @@ export default function AdminLayout() {
 
         <div className="p-4 border-t border-slate-200 mt-auto">
           <AlertDialog>
-            <AlertDialogTrigger asChild>
+            <AlertDialogTrigger>
               <button
                 title="Logout"
                 className={`flex items-center gap-3 px-3 py-2 w-full rounded-md transition-colors text-slate-600 hover:bg-red-50 hover:text-red-600 font-medium ${!isSidebarOpen && 'justify-center px-0'}`}

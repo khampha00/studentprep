@@ -39,4 +39,10 @@ public class QuestionController {
         repository.deleteById(id);
         return ResponseEntity.noContent().build();
     }
+
+    @DeleteMapping("/drafts/bulk")
+    public ResponseEntity<Void> deleteDraftsBulk(@RequestParam UUID subjectId) {
+        repository.deleteByStatusAndSubjectId("DRAFT", subjectId);
+        return ResponseEntity.noContent().build();
+    }
 }

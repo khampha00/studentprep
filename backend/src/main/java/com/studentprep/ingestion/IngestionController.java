@@ -20,18 +20,18 @@ import com.studentprep.questionbank.SubjectRepository;
 @RequestMapping("/api/v1/admin/ingest")
 public class IngestionController {
 
-    private final RestClient restClient;
+    private final DoclingService doclingService;
     private final SubjectRepository subjectRepository;
     private final S3Service s3Service;
     private final AsyncIngestionWorker asyncIngestionWorker;
     private final IngestionJobRepository ingestionJobRepository;
 
-    public IngestionController(RestClient.Builder restClientBuilder, 
+    public IngestionController(DoclingService doclingService, 
                                SubjectRepository subjectRepository, 
                                S3Service s3Service,
                                AsyncIngestionWorker asyncIngestionWorker,
                                IngestionJobRepository ingestionJobRepository) {
-        this.restClient = restClientBuilder.build();
+        this.doclingService = doclingService;
         this.subjectRepository = subjectRepository;
         this.s3Service = s3Service;
         this.asyncIngestionWorker = asyncIngestionWorker;
@@ -49,25 +49,29 @@ public class IngestionController {
     }
 
     @PostMapping("/pdf")
-    public ResponseEntity<Map<String, UUID>> ingestPdf(@RequestParam("file") MultipartFile file, @RequestParam("subjectId") UUID subjectId) {
+    public ResponseEntity<Map<String, Object>> ingestPdf(@RequestParam("file") MultipartFile file, @RequestParam("subjectId") UUID subjectId) {
+        if (!"application/pdf".equals(file.getContentType())) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Only PDF files are allowed"));
+        }
+        if (file.getSize() > 10 * 1024 * 1024) {
+            return ResponseEntity.badRequest().body(Map.of("error", "File size must be less than 10MB"));
+        }
+
+        try {
+            byte[] header = new byte[5];
+            java.io.InputStream is = file.getInputStream();
+            if (is.read(header) < 5 || !new String(header).equals("%PDF-")) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Invalid file format, magic bytes do not match PDF"));
+            }
+        } catch (java.io.IOException e) {
+            return ResponseEntity.status(500).body(Map.of("error", "Could not read file"));
+        }
+
         try {
             Subject subject = subjectRepository.findById(subjectId)
                     .orElseThrow(() -> new RuntimeException("Subject not found"));
 
-            // Step 1: Forward MultipartFile to Python docling-parser container
-            MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
-            body.add("file", file.getResource());
-
-            String doclingUrl = System.getenv().getOrDefault("DOCLING_PARSER_URL", "http://localhost:8000");
-
-            Map<String, String> response = restClient.post()
-                    .uri(doclingUrl + "/parse")
-                    .contentType(MediaType.MULTIPART_FORM_DATA)
-                    .body(body)
-                    .retrieve()
-                    .body(Map.class);
-
-            String markdown = response.get("markdown");
+            String markdown = doclingService.parsePdf(file.getResource());
 
             IngestionJob job = new IngestionJob();
             job.setSubject(subject);

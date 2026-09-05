@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Button } from '../../components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '../../components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -149,7 +149,7 @@ export default function SubjectList() {
                   <Edit2 className="w-4 h-4 mr-2" /> Edit
                 </Button>
                 <AlertDialog>
-                  <AlertDialogTrigger asChild>
+                  <AlertDialogTrigger>
                     <Button
                       variant="ghost"
                       size="sm"

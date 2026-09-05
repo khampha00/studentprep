@@ -148,13 +148,11 @@ export default function SubjectDetail() {
 
   const handleRejectAllDrafts = async () => {
     try {
-      for (const q of draftQuestions) {
-        await axios.delete(`/api/v1/admin/questions/${q.id}`);
-      }
+      await axios.delete(`/api/v1/admin/questions/drafts/bulk?subjectId=${id}`);
       toast.success(`Successfully deleted ${draftQuestions.length} drafts`);
       setDraftQuestions([]);
     } catch (e) {
-      toast.error('Failed to bulk delete some drafts');
+      toast.error('Failed to bulk delete drafts');
     }
   };
 
@@ -236,7 +234,7 @@ export default function SubjectDetail() {
 
               {activeTab === 'DRAFTS' && draftQuestions.length > 0 && (
                 <AlertDialog>
-                  <AlertDialogTrigger asChild>
+                  <AlertDialogTrigger>
                     <Button variant="outline" size="sm" className="text-destructive hover:bg-destructive/10 mb-2">
                       <Trash2 className="w-4 h-4 mr-2" /> Reject All Drafts
                     </Button>
@@ -292,7 +290,7 @@ export default function SubjectDetail() {
                           Correct Answer: {q.content?.correctOption || 'N/A'}
                         </div>
                         <AlertDialog>
-                          <AlertDialogTrigger asChild>
+                          <AlertDialogTrigger>
                             <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10 h-8">
                               Delete Question
                             </Button>
@@ -414,7 +412,7 @@ function DraftQuestionCard({ initialQuestion, idx, onApprove, onReject }: { init
         ))}
 
         <div className="mt-2 mb-4 text-center">
-          <label className="cursor-pointer text-sm font-medium text-blue-600 hover:text-blue-800 bg-blue-50 px-3 py-1.5 rounded border border-blue-200 transition-colors">
+          <label className="cursor-pointer text-sm font-medium text-green-600 hover:text-black bg-green-50 px-3 py-1.5 rounded border border-green-200 transition-colors">
             + Add Image
             <input type="file" accept="image/*" className="hidden" onChange={handleAddAsset} />
           </label>
@@ -473,7 +471,7 @@ function DraftQuestionCard({ initialQuestion, idx, onApprove, onReject }: { init
             </SelectTrigger>
             <SelectContent>
               {Object.keys(q.content?.options || {}).map((k) => (
-                <SelectItem key={k} value={k}>Option {k}</SelectItem>
+                <SelectItem key={k} value={k}> {k}</SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -498,9 +496,9 @@ function DraftQuestionCard({ initialQuestion, idx, onApprove, onReject }: { init
             setIsEditing(true);
           }}>Edit</Button>
         )}
-        
+
         <AlertDialog>
-          <AlertDialogTrigger asChild>
+          <AlertDialogTrigger>
             <Button variant="outline" className="text-destructive">Reject</Button>
           </AlertDialogTrigger>
           <AlertDialogContent>
