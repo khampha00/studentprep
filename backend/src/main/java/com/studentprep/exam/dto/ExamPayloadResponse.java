@@ -8,6 +8,7 @@ public class ExamPayloadResponse {
     private Long shuffleSeed;
     private Integer durationMinutes;
     private List<Object> questions;
+    private java.util.Map<String, String> contexts;
 
     public UUID getExamId() { return examId; }
     public void setExamId(UUID examId) { this.examId = examId; }
@@ -17,4 +18,6 @@ public class ExamPayloadResponse {
     public void setDurationMinutes(Integer durationMinutes) { this.durationMinutes = durationMinutes; }
     public List<Object> getQuestions() { return questions; }
     public void setQuestions(List<Object> questions) { this.questions = questions; }
+    public java.util.Map<String, String> getContexts() { return contexts; }
+    public void setContexts(java.util.Map<String, String> contexts) { this.contexts = contexts; }
 }

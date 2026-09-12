@@ -8,6 +8,8 @@ import com.studentprep.ingestion.job.IngestionJobRepository;
 import com.studentprep.ingestion.job.IngestionJobStatus;
 import com.studentprep.questionbank.Question;
 import com.studentprep.questionbank.QuestionRepository;
+import com.studentprep.questionbank.QuestionContext;
+import com.studentprep.questionbank.QuestionContextRepository;
 import com.studentprep.questionbank.Subject;
 import com.studentprep.questionbank.SubjectRepository;
 
@@ -29,17 +31,20 @@ public class AsyncIngestionWorker {
     private final IngestionJobRepository jobRepository;
     private final QuestionRepository questionRepository;
     private final SubjectRepository subjectRepository;
+    private final QuestionContextRepository questionContextRepository;
     private final ObjectMapper objectMapper;
 
     public AsyncIngestionWorker(LlmStructuringService llmStructuringService,
                                 IngestionJobRepository jobRepository,
                                 QuestionRepository questionRepository,
                                 SubjectRepository subjectRepository,
+                                QuestionContextRepository questionContextRepository,
                                 ObjectMapper objectMapper) {
         this.llmStructuringService = llmStructuringService;
         this.jobRepository = jobRepository;
         this.questionRepository = questionRepository;
         this.subjectRepository = subjectRepository;
+        this.questionContextRepository = questionContextRepository;
         this.objectMapper = objectMapper;
     }
 
@@ -69,7 +74,7 @@ public class AsyncIngestionWorker {
             }
             splitPoints.add(markdown.length());
 
-            int chunkSize = 1500;
+            int chunkSize = 4000;
             int currentStart = 0;
 
             // First count total chunks to update the job
@@ -101,6 +106,7 @@ public class AsyncIngestionWorker {
             jobRepository.save(job);
 
             int processedCount = 0;
+            QuestionContext currentContext = null;
 
             for (String chunk : chunks) {
                 boolean success = false;
@@ -108,16 +114,34 @@ public class AsyncIngestionWorker {
                 int maxRateLimitWaits = 10;
                 int retryCount = 0;
                 int rateLimitCount = 0;
+                QuestionContext originalContext = currentContext;
                 
                 while (!success) {
+                    currentContext = originalContext;
                     try {
-                        JsonNode structuredQuestions = llmStructuringService.structureChunk(chunk);
+                        String warning = (currentContext != null) ? "Note: The previous chunk ended inside a shared context group for this specific passage:\n\n\"" + currentContext.getPassage() + "\"\n\nIf the first questions in this chunk belong to that passage, DO NOT extract the passage again, just set `is_follow_up: true` for those questions." : null;
+                        JsonNode structuredQuestions = llmStructuringService.structureChunk(chunk, warning);
                         
                         if (structuredQuestions.isArray()) {
                             for (JsonNode qNode : structuredQuestions) {
+                                boolean isFollowUp = qNode.path("is_follow_up").asBoolean(false);
+                                if (!isFollowUp) {
+                                    currentContext = null;
+                                }
+
+                                if (qNode.hasNonNull("shared_context") && !qNode.path("shared_context").asText().isEmpty()) {
+                                    currentContext = new QuestionContext();
+                                    currentContext.setSubject(subject);
+                                    currentContext.setPassage(qNode.path("shared_context").asText());
+                                    currentContext = questionContextRepository.save(currentContext);
+                                }
+                                
                                 Question q = new Question();
                                 q.setStatus("DRAFT");
                                 q.setSubject(subject);
+                                if (currentContext != null) {
+                                    q.setContext(currentContext);
+                                }
                                 Map<String, Object> contentMap = objectMapper.convertValue(qNode, new TypeReference<Map<String, Object>>() {});
                                 q.setContent(contentMap);
                                 questionRepository.save(q);

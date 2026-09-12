@@ -11,4 +11,7 @@ public interface QuestionRepository extends JpaRepository<Question, UUID> {
     @org.springframework.data.jpa.repository.Modifying
     @org.springframework.data.jpa.repository.Query("DELETE FROM Question q WHERE q.status = ?1 AND q.subject.id = ?2")
     void deleteByStatusAndSubjectId(String status, UUID subjectId);
+    
+    long countByContextId(UUID contextId);
+    List<Question> findByContextId(UUID contextId);
 }

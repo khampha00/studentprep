@@ -6,6 +6,7 @@ interface ExamState {
   sessionId: string | null;
   shuffleSeed: number | null;
   questions: any[];
+  contexts: Record<string, string>;
   answers: Record<string, string>;
   timeLeft: number;
   lastUpdated: number;
@@ -19,6 +20,7 @@ const initialState: ExamState = {
   sessionId: null,
   shuffleSeed: null,
   questions: [],
+  contexts: {},
   answers: {},
   timeLeft: 7200, // 2 hours
   lastUpdated: 0,
@@ -95,7 +97,10 @@ export const fetchExamPayload = createAsyncThunk(
     'exam/fetchPayload',
     async () => {
         const response = await axios.get('/api/v1/exams/active/payload');
-        return response.data.data.questions;
+        return {
+            questions: response.data.data.questions,
+            contexts: response.data.data.contexts || {}
+        };
     }
 );
 
@@ -138,7 +143,8 @@ const examSlice = createSlice({
           state.isExamTerminated = payload.isExamTerminated || false;
       });
       builder.addCase(fetchExamPayload.fulfilled, (state, action) => {
-          state.questions = action.payload;
+          state.questions = action.payload.questions;
+          state.contexts = action.payload.contexts;
       });
       builder.addCase(syncExamData.pending, (state) => { state.syncStatus = 'syncing'; });
       builder.addCase(syncExamData.fulfilled, (state, action) => { 

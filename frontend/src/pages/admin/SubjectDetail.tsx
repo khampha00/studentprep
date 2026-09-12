@@ -128,9 +128,9 @@ export default function SubjectDetail() {
     try {
       const updated = { ...finalQ, status: 'ACTIVE' };
       await axios.put('/api/v1/admin/questions/' + finalQ.id, updated);
-      toast.success('Question Approved');
       setDraftQuestions(prev => prev.filter(x => x.id !== finalQ.id));
-      fetchActiveQuestions();
+      await fetchActiveQuestions();
+      toast.success('Question Approved');
     } catch (e) {
       toast.error('Failed to approve question');
     }
@@ -139,8 +139,8 @@ export default function SubjectDetail() {
   const handleReject = async (q: any) => {
     try {
       await axios.delete('/api/v1/admin/questions/' + q.id);
-      toast.success('Question Rejected and Deleted');
       setDraftQuestions(prev => prev.filter(x => x.id !== q.id));
+      toast.success('Question Rejected and Deleted');
     } catch (e) {
       toast.error('Failed to reject question');
     }
@@ -149,11 +149,106 @@ export default function SubjectDetail() {
   const handleRejectAllDrafts = async () => {
     try {
       await axios.delete(`/api/v1/admin/questions/drafts/bulk?subjectId=${id}`);
-      toast.success(`Successfully deleted ${draftQuestions.length} drafts`);
       setDraftQuestions([]);
+      toast.success(`Successfully deleted ${draftQuestions.length} drafts`);
     } catch (e) {
       toast.error('Failed to bulk delete drafts');
     }
+  };
+
+  const handleRejectAllActive = async () => {
+    try {
+      await axios.delete(`/api/v1/admin/questions/active/bulk?subjectId=${id}`);
+      setActiveQuestions([]);
+      toast.success(`Successfully deleted all active questions`);
+    } catch (e) {
+      toast.error('Failed to bulk delete active questions');
+    }
+  };
+
+  const handleApproveAllDrafts = async () => {
+    try {
+      await axios.post(`/api/v1/admin/questions/drafts/bulk-approve?subjectId=${id}`);
+      await fetchDraftQuestions();
+      await fetchActiveQuestions();
+      toast.success(`Successfully approved all drafts`);
+    } catch (e: any) {
+      if (e.response?.data && typeof e.response.data === 'string') {
+        toast.error(e.response.data);
+      } else {
+        toast.error('Failed to bulk approve drafts');
+      }
+    }
+  };
+
+  const handleUngroupContext = async (contextId: string) => {
+    try {
+      await axios.post(`/api/v1/admin/questions/contexts/${contextId}/ungroup`);
+      await fetchDraftQuestions(); // Wait for data to reload
+      toast.success('Passage ungrouped successfully');
+    } catch (e) {
+      toast.error('Failed to ungroup passage');
+    }
+  };
+
+  const handleApproveContext = async (contextId: string) => {
+    const group = draftQuestions.filter(dq => dq.context?.id === contextId);
+    const missing = group.find(q => !q.content?.correctOption);
+    if (missing) {
+      toast.error(`Question #${missing.content?.questionNumber || draftQuestions.indexOf(missing) + 1} is missing a Correct Answer!`);
+      return;
+    }
+
+    try {
+      await axios.post(`/api/v1/admin/questions/contexts/${contextId}/approve`);
+      await fetchDraftQuestions();
+      await fetchActiveQuestions();
+      toast.success('Group approved successfully');
+    } catch (e) {
+      toast.error('Failed to approve group');
+    }
+  };
+
+  const handleUpdateDraft = (updatedQ: any) => {
+    setDraftQuestions(prev => prev.map(dq => dq.id === updatedQ.id ? updatedQ : dq));
+  };
+
+  const handleUngroupQuestion = async (questionId: string) => {
+    try {
+      await axios.post(`/api/v1/admin/questions/${questionId}/ungroup`);
+      await fetchDraftQuestions();
+      toast.success('Question ungrouped successfully');
+    } catch (e) {
+      toast.error('Failed to ungroup question');
+    }
+  };
+
+  const handleLinkQuestion = async (questionId: string, contextId: string | null, newPassage: string) => {
+    try {
+      await axios.post(`/api/v1/admin/questions/${questionId}/link`, { contextId, newPassage });
+      await fetchDraftQuestions();
+      toast.success('Question linked successfully');
+    } catch (e) {
+      toast.error('Failed to link question');
+    }
+  };
+
+
+  const groupQuestions = (questions: any[]) => {
+    const groups: any[] = [];
+    questions.forEach((q) => {
+        if (q.context) {
+            let group = groups.find(g => g.contextId === q.context.id);
+            if (!group) {
+                group = { contextId: q.context.id, passage: q.context.passage, questions: [] };
+                groups.push(group);
+            }
+            group.questions.push(q);
+        } else {
+            groups.push({ contextId: null, passage: null, questions: [q] });
+        }
+    });
+    return groups;
   };
 
   if (!subject) {
@@ -233,39 +328,99 @@ export default function SubjectDetail() {
               </nav>
 
               {activeTab === 'DRAFTS' && draftQuestions.length > 0 && (
-                <AlertDialog>
-                  <AlertDialogTrigger>
-                    <Button variant="outline" size="sm" className="text-destructive hover:bg-destructive/10 mb-2">
-                      <Trash2 className="w-4 h-4 mr-2" /> Reject All Drafts
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Reject All Drafts</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        Are you sure you want to delete all {draftQuestions.length} pending drafts? This action cannot be undone.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction onClick={handleRejectAllDrafts} className="bg-destructive text-white hover:bg-destructive/90">
-                        Reject All
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
+                <div className="flex gap-2 items-center">
+                  <AlertDialog>
+                    <AlertDialogTrigger>
+                      <Button variant="outline" size="sm" className="text-destructive hover:bg-destructive/10 mb-2">
+                        <Trash2 className="w-4 h-4 mr-2" /> Reject All Drafts
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Reject All Drafts</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          Are you sure you want to delete all {draftQuestions.length} pending drafts? This action cannot be undone.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={handleRejectAllDrafts} className="bg-destructive text-white hover:bg-destructive/90">
+                          Reject All
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+
+                  <AlertDialog>
+                    <AlertDialogTrigger>
+                      <Button variant="default" size="sm" className="bg-[#008751] hover:bg-[#007043] text-white mb-2">
+                        Approve All ({draftQuestions.length})
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Approve All Drafts</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          Are you sure you want to approve all {draftQuestions.length} pending drafts? Any questions missing a correct answer will cause this batch approval to fail.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={handleApproveAllDrafts} className="bg-[#008751] text-white hover:bg-[#007043]">
+                          Approve All
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </div>
               )}
             </div>
 
             {activeTab === 'ACTIVE' && (
-              <div className="grid grid-cols-2 gap-y-4 gap-x-6">
-                {activeQuestions.length === 0 ? (
-                  <p className="text-slate-500 col-span-2">No active questions for this subject yet.</p>
-                ) : (
-                  activeQuestions.map((q, idx) => (
-                    <Card key={q.id} className="flex flex-col relative">
+              <div className="space-y-4">
+                {activeQuestions.length > 0 && (
+                  <div className="flex gap-2 items-center">
+                    <AlertDialog>
+                      <AlertDialogTrigger>
+                        <Button variant="outline" size="sm" className="text-destructive hover:bg-destructive/10">
+                          <Trash2 className="w-4 h-4 mr-2" /> Delete All Active
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Delete All Active Questions</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            Are you sure you want to permanently delete all {activeQuestions.length} active questions? This action cannot be undone.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction onClick={handleRejectAllActive} className="bg-destructive text-white hover:bg-destructive/90">
+                            Delete All
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-y-4 gap-x-6">
+                  {activeQuestions.length === 0 ? (
+                    <p className="text-slate-500 col-span-2">No active questions for this subject yet.</p>
+                  ) : (
+                  groupQuestions(activeQuestions).map((group) => {
+                    if (group.contextId) {
+                      return (
+                        <div key={group.contextId} className="col-span-2 border-2 border-slate-300 rounded-xl p-4 bg-slate-50/50 space-y-4">
+                          <div className="p-4 bg-white border border-slate-200 rounded-md shadow-sm">
+                            <h4 className="font-bold text-slate-800 mb-2 uppercase tracking-wider text-xs">Shared Context</h4>
+                            <div className="prose prose-slate max-w-none text-sm"><MathText content={group.passage} /></div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            {group.questions.map((q: any) => (
+
+                    <Card key={q.id} className="flex flex-col relative h-full">
                       <CardHeader className="pb-2">
-                        <CardTitle className="text-lg text-[#008751]">Question #{idx + 1}</CardTitle>
+                        <CardTitle className="text-lg text-[#008751]">Question {q.content?.questionNumber ? '#' + q.content.questionNumber : 'ID: ' + q.id.substring(0, 8)}</CardTitle>
                       </CardHeader>
                       <CardContent className="flex-1 text-sm text-slate-700">
                         {q.content?.assets?.map((asset: string, i: number) => (
@@ -292,7 +447,7 @@ export default function SubjectDetail() {
                         <AlertDialog>
                           <AlertDialogTrigger>
                             <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10 h-8">
-                              Delete Question
+                              Delete
                             </Button>
                           </AlertDialogTrigger>
                           <AlertDialogContent>
@@ -323,8 +478,79 @@ export default function SubjectDetail() {
                         </AlertDialog>
                       </div>
                     </Card>
-                  ))
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    } else {
+                      const q = group.questions[0];
+                      return (
+
+                    <Card key={q.id} className="flex flex-col relative h-full">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-lg text-[#008751]">Question {q.content?.questionNumber ? '#' + q.content.questionNumber : 'ID: ' + q.id.substring(0, 8)}</CardTitle>
+                      </CardHeader>
+                      <CardContent className="flex-1 text-sm text-slate-700">
+                        {q.content?.assets?.map((asset: string, i: number) => (
+                          <div key={i} className="mb-4 text-center">
+                            <img src={asset} alt="Diagram" className="max-w-full max-h-[300px] object-contain mx-auto rounded border border-slate-200" />
+                          </div>
+                        ))}
+                        <div className="font-medium mb-4">
+                          <MathText content={q.content?.text || q.content?.passage || "No text available"} />
+                        </div>
+                        <div className="space-y-2 mt-4 p-4 bg-slate-50 rounded-md">
+                          {Object.entries(q.content?.options || {}).map(([k, v]) => (
+                            <div key={k} className={`flex gap-3 items-start ${q.content?.correctOption === k ? 'text-[#008751] font-bold' : ''}`}>
+                              <span className="shrink-0 mt-0.5 w-6">{k}:</span>
+                              <div className="flex-1"><MathText content={String(v)} /></div>
+                            </div>
+                          ))}
+                        </div>
+                      </CardContent>
+                      <div className="p-3 border-t border-slate-100 flex justify-between items-center">
+                        <div className="text-sm font-semibold text-[#008751]">
+                          Correct Answer: {q.content?.correctOption || 'N/A'}
+                        </div>
+                        <AlertDialog>
+                          <AlertDialogTrigger>
+                            <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10 h-8">
+                              Delete
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Delete Question</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                Are you sure you want to delete this active question? This action cannot be undone.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction
+                                className="bg-destructive text-white hover:bg-destructive/90"
+                                onClick={async () => {
+                                  try {
+                                    await axios.delete(`/api/v1/admin/questions/${q.id}`);
+                                    toast.success('Question deleted');
+                                    fetchActiveQuestions();
+                                  } catch (e) {
+                                    toast.error('Failed to delete question');
+                                  }
+                                }}
+                              >
+                                Delete
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </div>
+                    </Card>
+                      );
+                    }
+                  })
                 )}
+                </div>
               </div>
             )}
 
@@ -333,15 +559,62 @@ export default function SubjectDetail() {
                 {draftQuestions.length === 0 ? (
                   <p className="text-slate-500 col-span-2">No pending drafts for this subject.</p>
                 ) : (
-                  draftQuestions.map((q, idx) => (
-                    <DraftQuestionCard
-                      key={q.id}
-                      initialQuestion={q}
-                      idx={idx}
-                      onApprove={handleApprove}
-                      onReject={handleReject}
-                    />
-                  ))
+                  groupQuestions(draftQuestions).map((group) => {
+                    if (group.contextId) {
+                      return (
+                        <div key={group.contextId} className="col-span-2 border-2 border-slate-300 rounded-xl p-4 bg-slate-50/50 space-y-4">
+                          <div className="p-4 bg-white border border-slate-200 rounded-md shadow-sm">
+                            <h4 className="font-bold text-slate-800 mb-2 uppercase tracking-wider text-xs">Shared Context</h4>
+                            <div className="prose prose-slate max-w-none text-sm"><MathText content={group.passage} /></div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            {group.questions.map((q: any) => {
+                              const globalIdx = draftQuestions.findIndex(dq => dq.id === q.id);
+                              return (
+                              <DraftQuestionCard
+                                key={q.id}
+                                initialQuestion={q}
+                                idx={globalIdx}
+                                onApprove={undefined} // Removed individual approve
+                                onReject={handleReject}
+                                onUngroup={handleUngroupQuestion}
+                                onUpdate={handleUpdateDraft}
+                                isGrouped={true}
+                              />
+                            )})}
+                          </div>
+                          <div className="flex justify-end pt-2 border-t border-slate-200 mt-4 gap-3">
+                            <Button variant="outline" className="text-amber-600 border-amber-200 hover:bg-amber-50" onClick={() => handleUngroupContext(group.contextId)}>
+                              Ungroup All
+                            </Button>
+                            <Button className="bg-[#008751]" onClick={() => handleApproveContext(group.contextId)}>
+                              Approve Entire Group
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    } else {
+                      const q = group.questions[0];
+                      const globalIdx = draftQuestions.findIndex(dq => dq.id === q.id);
+                      
+                      // Find all unique available contexts to link to
+                      const availableContexts = Array.from(new Map(draftQuestions.filter(x => x.context).map(x => [x.context.id, x.context])).values());
+                      
+                      return (
+                        <DraftQuestionCard
+                          key={q.id}
+                          initialQuestion={q}
+                          idx={globalIdx}
+                          onApprove={handleApprove}
+                          onReject={handleReject}
+                          onLink={handleLinkQuestion}
+                          onUpdate={handleUpdateDraft}
+                          isGrouped={false}
+                          availableContexts={availableContexts}
+                        />
+                      );
+                    }
+                  })
                 )}
               </div>
             )}
@@ -353,10 +626,23 @@ export default function SubjectDetail() {
 }
 
 // Local component to manage edit state and prevent parent re-renders on keystrokes
-function DraftQuestionCard({ initialQuestion, idx, onApprove, onReject }: { initialQuestion: any, idx: number, onApprove: (q: any) => void, onReject: (q: any) => void }) {
+function DraftQuestionCard({ initialQuestion, idx, onApprove, onReject, onUngroup, onLink, onUpdate, availableContexts, isGrouped }: { initialQuestion: any, idx: number, onApprove: ((q: any) => void) | undefined, onReject: (q: any) => void, onUngroup?: (id: string) => void, onLink?: (id: string, ctxId: string | null, passage: string) => void, onUpdate?: (q: any) => void, availableContexts?: any[], isGrouped?: boolean }) {
   const [q, setQ] = useState(initialQuestion);
   const [isEditing, setIsEditing] = useState(false);
   const [backup, setBackup] = useState<any>(null);
+  const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
+  const [linkTab, setLinkTab] = useState<'EXISTING' | 'NEW'>('EXISTING');
+  const [selectedContextId, setSelectedContextId] = useState<string>('');
+  const [newPassageText, setNewPassageText] = useState('');
+
+  const saveDraft = async (updatedQ: any) => {
+    try {
+      await axios.put(`/api/v1/admin/questions/${updatedQ.id}`, updatedQ);
+      if (onUpdate) onUpdate(updatedQ);
+    } catch (e) {
+      toast.error('Failed to autosave question');
+    }
+  };
 
   const handleAddAsset = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -370,6 +656,7 @@ function DraftQuestionCard({ initialQuestion, idx, onApprove, onReject }: { init
         const updated = { ...prev, content: { ...prev.content } };
         if (!updated.content.assets) updated.content.assets = [];
         updated.content.assets.push(url);
+        saveDraft(updated);
         return updated;
       });
       toast.success('Image added');
@@ -380,15 +667,15 @@ function DraftQuestionCard({ initialQuestion, idx, onApprove, onReject }: { init
 
   const attemptApprove = () => {
     if (!q.content?.correctOption) {
-      toast.error(`Question #${idx + 1}: You must select a Correct Answer before approving.`);
+      toast.error(`Question #${q.content?.questionNumber || idx + 1}: You must select a Correct Answer before approving.`);
       return;
     }
-    onApprove(q);
+    if (onApprove) onApprove(q);
   };
 
   return (
     <Card>
-      <CardHeader><CardTitle className="text-lg">Draft #{idx + 1}</CardTitle></CardHeader>
+      <CardHeader><CardTitle className="text-lg">Draft #{initialQuestion.content?.questionNumber || idx + 1}</CardTitle></CardHeader>
       <CardContent>
         {q.content?.assets?.map((asset: string, i: number) => (
           <div key={i} className="relative inline-block my-2 group w-full text-center">
@@ -401,6 +688,7 @@ function DraftQuestionCard({ initialQuestion, idx, onApprove, onReject }: { init
                 setQ((prev: any) => {
                   const updated = { ...prev, content: { ...prev.content } };
                   updated.content.assets = updated.content.assets.filter((_: any, idxAsset: number) => idxAsset !== i);
+                  saveDraft(updated);
                   return updated;
                 });
               }}
@@ -463,7 +751,11 @@ function DraftQuestionCard({ initialQuestion, idx, onApprove, onReject }: { init
           <Select
             value={q.content?.correctOption || ''}
             onValueChange={(val) => {
-              setQ((prev: any) => ({ ...prev, content: { ...prev.content, correctOption: val } }));
+              setQ((prev: any) => {
+                const updated = { ...prev, content: { ...prev.content, correctOption: val } };
+                saveDraft(updated);
+                return updated;
+              });
             }}
           >
             <SelectTrigger className="w-[140px] bg-white">
@@ -488,6 +780,7 @@ function DraftQuestionCard({ initialQuestion, idx, onApprove, onReject }: { init
             <Button variant="outline" className="border-[#008751] text-[#008751]" onClick={() => {
               setIsEditing(false);
               setBackup(null);
+              saveDraft(q);
             }}>Save</Button>
           </>
         ) : (
@@ -517,8 +810,79 @@ function DraftQuestionCard({ initialQuestion, idx, onApprove, onReject }: { init
           </AlertDialogContent>
         </AlertDialog>
 
-        <Button className="bg-[#008751]" onClick={attemptApprove}>Approve</Button>
+        {isGrouped && onUngroup && (
+          <Button variant="outline" className="text-amber-600 border-amber-200 hover:bg-amber-50" onClick={() => onUngroup(q.id)}>
+            Ungroup
+          </Button>
+        )}
+
+        {!isGrouped && onLink && (
+          <Button variant="outline" className="text-blue-600 border-blue-200 hover:bg-blue-50" onClick={() => setIsLinkModalOpen(true)}>
+            Link to Passage
+          </Button>
+        )}
+
+        {onApprove && (
+          <Button className="bg-[#008751]" onClick={attemptApprove}>Approve</Button>
+        )}
       </CardFooter>
+
+      {/* Link Modal */}
+      {!isGrouped && onLink && (
+        <AlertDialog open={isLinkModalOpen} onOpenChange={setIsLinkModalOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Link Question to Shared Context</AlertDialogTitle>
+            </AlertDialogHeader>
+            <div className="flex gap-4 mb-4 border-b pb-2">
+              <button className={`font-semibold ${linkTab === 'EXISTING' ? 'text-[#008751]' : 'text-slate-500'}`} onClick={() => setLinkTab('EXISTING')}>Existing Context</button>
+              <button className={`font-semibold ${linkTab === 'NEW' ? 'text-[#008751]' : 'text-slate-500'}`} onClick={() => setLinkTab('NEW')}>Create New</button>
+            </div>
+            
+            {linkTab === 'EXISTING' ? (
+              <div className="space-y-2">
+                <p className="text-sm text-slate-600 mb-2">Select a reading passage to attach this question to:</p>
+                <Select value={selectedContextId} onValueChange={setSelectedContextId}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="-- Select Passage --" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableContexts?.map((ctx: any) => (
+                      <SelectItem key={ctx.id} value={ctx.id}>
+                        {ctx.passage.substring(0, 60)}...
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-sm text-slate-600 mb-2">Paste the text of the new reading passage here:</p>
+                <textarea 
+                  className="w-full h-32 p-3 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#008751]"
+                  value={newPassageText}
+                  onChange={e => setNewPassageText(e.target.value)}
+                  placeholder="e.g. Read the following passage carefully..."
+                />
+              </div>
+            )}
+            
+            <AlertDialogFooter className="mt-4">
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <Button 
+                className="bg-[#008751]" 
+                disabled={(linkTab === 'EXISTING' && !selectedContextId) || (linkTab === 'NEW' && !newPassageText.trim())}
+                onClick={() => {
+                  onLink(q.id, linkTab === 'EXISTING' ? selectedContextId : null, linkTab === 'NEW' ? newPassageText : '');
+                  setIsLinkModalOpen(false);
+                }}
+              >
+                Link
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
     </Card>
   );
 }

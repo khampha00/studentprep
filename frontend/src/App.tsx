@@ -154,6 +154,7 @@ function ExamDashboard() {
   const questions = useSelector((state: RootState) => state.exam.questions);
   const [currentIdx, setCurrentIdx] = useState(0);
   const currentQ = questions[currentIdx];
+  const sharedContext = currentQ?.contextId ? exam.contexts[currentQ.contextId] : null;
 
   if (!questions || questions.length === 0) {
     return <div className="min-h-screen flex items-center justify-center font-bold text-slate-500">Loading Exam...</div>;
@@ -265,43 +266,53 @@ function ExamDashboard() {
         </div>
 
         <div className="md:col-span-3">
-          <Card className="p-2 md:p-4">
-            <CardHeader className="flex flex-row justify-between items-center mb-2 border-b-0">
+          <Card className="p-0 overflow-hidden flex flex-col min-h-[600px] shadow-sm">
+            <CardHeader className="flex flex-row justify-between items-center mb-0 border-b p-4 bg-white shrink-0">
               <CardTitle className="text-lg font-bold text-slate-800">Question {currentIdx + 1} of {questions.length}</CardTitle>
               <span className="bg-slate-100 text-slate-600 px-3 py-1 rounded-full text-xs font-semibold">{currentQ.subject}</span>
             </CardHeader>
-            <CardContent>
-              <div className="text-slate-800 text-lg leading-relaxed mb-8">
-                {currentQ.content.assets && currentQ.content.assets.map((asset: any, i: number) => (
-                  asset.type === 'IMAGE' && <img key={i} src={asset.url} alt={asset.alt} className="mb-4 max-w-md" />
-                ))}
-                <RichText text={currentQ.content.text || currentQ.content.passage || ''} />
+            <CardContent className="p-0 flex-1 flex flex-col md:flex-row relative">
+              {sharedContext && (
+                <div className="md:w-1/2 p-4 md:p-6 border-b md:border-b-0 md:border-r border-slate-200 bg-slate-50 overflow-y-auto max-h-[50vh] md:max-h-[65vh]">
+                  <div className="mb-4">
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500 bg-slate-200 px-2 py-1 rounded">Shared Context</span>
+                  </div>
+                  <RichText text={sharedContext} />
+                </div>
+              )}
+              <div className={cn("p-4 md:p-6 overflow-y-auto max-h-[65vh]", sharedContext ? "md:w-1/2" : "w-full")}>
+                <div className="text-slate-800 text-lg leading-relaxed mb-8">
+                  {currentQ.content.assets && currentQ.content.assets.map((asset: any, i: number) => (
+                    asset.type === 'IMAGE' && <img key={i} src={asset.url} alt={asset.alt} className="mb-4 max-w-md" />
+                  ))}
+                  <RichText text={currentQ.content.text || currentQ.content.passage || ''} />
+                </div>
+                <RadioGroup 
+                  value={exam.answers[currentQ.id]} 
+                  onValueChange={(val) => dispatch(answerQuestion({ questionId: currentQ.id, optionId: val }))}
+                  className="space-y-3"
+                >
+                  {Object.entries(currentQ.content.options || {}).map(([optKey, optText], i) => {
+                    const optId = optKey;
+                    const isSelected = exam.answers[currentQ.id] === optId;
+                    return (
+                      <Label
+                        key={i}
+                        htmlFor={optId}
+                        className={cn("flex items-center gap-4 w-full text-left px-5 py-4 rounded-lg border-2 transition-all cursor-pointer", isSelected ? "border-primary bg-primary/5 shadow-sm" : "border-slate-200 hover:border-slate-300 hover:bg-slate-50")}
+                      >
+                        <RadioGroupItem value={optId} id={optId} className={cn(isSelected ? "text-primary border-primary" : "")} />
+                        <span className={cn("font-bold text-lg", isSelected ? "text-primary" : "text-slate-400")}>{optKey}</span>
+                        <span className="font-medium text-slate-700 text-base flex-1">
+                          <RichText text={String(optText)} />
+                        </span>
+                      </Label>
+                    )
+                  })}
+                </RadioGroup>
               </div>
-              <RadioGroup 
-                value={exam.answers[currentQ.id]} 
-                onValueChange={(val) => dispatch(answerQuestion({ questionId: currentQ.id, optionId: val }))}
-                className="space-y-3"
-              >
-                {Object.entries(currentQ.content.options || {}).map(([optKey, optText], i) => {
-                  const optId = optKey;
-                  const isSelected = exam.answers[currentQ.id] === optId;
-                  return (
-                    <Label
-                      key={i}
-                      htmlFor={optId}
-                      className={cn("flex items-center gap-4 w-full text-left px-5 py-4 rounded-lg border-2 transition-all cursor-pointer", isSelected ? "border-primary bg-primary/5 shadow-sm" : "border-slate-200 hover:border-slate-300 hover:bg-slate-50")}
-                    >
-                      <RadioGroupItem value={optId} id={optId} className={cn(isSelected ? "text-primary border-primary" : "")} />
-                      <span className={cn("font-bold text-lg", isSelected ? "text-primary" : "text-slate-400")}>{optKey}</span>
-                      <span className="font-medium text-slate-700 text-base flex-1">
-                        <RichText text={String(optText)} />
-                      </span>
-                    </Label>
-                  )
-                })}
-              </RadioGroup>
             </CardContent>
-            <CardFooter className="flex justify-between mt-6 pt-6 border-t border-slate-100">
+            <CardFooter className="flex justify-between p-4 border-t border-slate-200 bg-white shrink-0">
               <Button 
                 variant="outline"
                 onClick={() => setCurrentIdx(Math.max(0, currentIdx - 1))}
@@ -393,7 +404,15 @@ export default function App() {
           <Route path="students" element={<div className="p-8"><h1 className="text-3xl font-bold">Students (Coming Soon)</h1></div>} />
         </Route>
       </Routes>
-      <Toaster position="top-center" />
+      <Toaster 
+        position="top-center" 
+        toastOptions={{
+          classNames: {
+            success: '!bg-[#008751] !text-white !border-[#008751] [&_svg]:text-white',
+            error: '!bg-red-600 !text-white !border-red-600 [&_svg]:text-white',
+          }
+        }}
+      />
     </BrowserRouter>
   );
 }

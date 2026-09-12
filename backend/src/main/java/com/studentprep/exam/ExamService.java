@@ -103,23 +103,50 @@ public class ExamService {
         java.util.List<com.studentprep.questionbank.Question> questions = questionAPI.getActiveQuestions();
         
         java.util.List<Object> strippedQuestions = new java.util.ArrayList<>();
+        Map<String, String> contextsMap = new java.util.HashMap<>();
         com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
         mapper.registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
         
+        Map<String, java.util.List<Object>> groupedQuestions = new java.util.HashMap<>();
+        java.util.List<Object> standaloneQuestions = new java.util.ArrayList<>();
+
+        long hashSeed = 0;
         for (com.studentprep.questionbank.Question q : questions) {
+            hashSeed += q.getId().hashCode();
             Map<String, Object> map = mapper.convertValue(q, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
             Map<String, Object> content = (Map<String, Object>) map.get("content");
             if (content != null) {
                 content.remove("correctOption");
             }
-            strippedQuestions.add(map);
+            if (q.getContext() != null) {
+                String ctxId = q.getContext().getId().toString();
+                map.put("contextId", ctxId);
+                contextsMap.put(ctxId, q.getContext().getPassage());
+                groupedQuestions.computeIfAbsent(ctxId, k -> new java.util.ArrayList<>()).add(map);
+            } else {
+                standaloneQuestions.add(map);
+            }
+        }
+        
+        java.util.List<java.util.List<Object>> allGroups = new java.util.ArrayList<>();
+        allGroups.addAll(groupedQuestions.values());
+        for (Object sq : standaloneQuestions) {
+            allGroups.add(java.util.Collections.singletonList(sq));
+        }
+        
+        long seed = hashSeed == 0 ? 12345L : hashSeed;
+        java.util.Collections.shuffle(allGroups, new java.util.Random(seed));
+        
+        for (java.util.List<Object> group : allGroups) {
+            strippedQuestions.addAll(group);
         }
         
         com.studentprep.exam.dto.ExamPayloadResponse response = new com.studentprep.exam.dto.ExamPayloadResponse();
         response.setExamId(UUID.randomUUID());
-        response.setShuffleSeed(ThreadLocalRandom.current().nextLong(1000, 9999));
+        response.setShuffleSeed(seed);
         response.setDurationMinutes(EXAM_DURATION_MINUTES);
         response.setQuestions(strippedQuestions);
+        response.setContexts(contextsMap);
         return response;
     }
 }

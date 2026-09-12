@@ -22,6 +22,11 @@ public class Question extends BaseEntity {
     @ManyToOne
     @JoinColumn(name = "subject_id")
     private Subject subject;
+
+    @ManyToOne
+    @JoinColumn(name = "context_id")
+    private QuestionContext context;
+
     private String topic;
     private String status;
 
