@@ -269,7 +269,7 @@ function ExamDashboard() {
           <Card className="p-0 overflow-hidden flex flex-col min-h-[600px] shadow-sm">
             <CardHeader className="flex flex-row justify-between items-center mb-0 border-b p-4 bg-white shrink-0">
               <CardTitle className="text-lg font-bold text-slate-800">Question {currentIdx + 1} of {questions.length}</CardTitle>
-              <span className="bg-slate-100 text-slate-600 px-3 py-1 rounded-full text-xs font-semibold">{currentQ.subject}</span>
+              <span className="bg-slate-100 text-slate-600 px-3 py-1 rounded-full text-xs font-semibold">{currentQ.subject?.name || currentQ.subject}</span>
             </CardHeader>
             <CardContent className="p-0 flex-1 flex flex-col md:flex-row relative">
               {sharedContext && (
