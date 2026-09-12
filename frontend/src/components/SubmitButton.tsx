@@ -1,4 +1,5 @@
 import { useDispatch } from 'react-redux';
+import { useNavigate } from 'react-router-dom';
 import type { AppDispatch } from '../store/store';
 import { syncExamData } from '../store/examSlice';
 import { Button } from './ui/button';
@@ -7,6 +8,7 @@ import { toast } from 'sonner';
 
 export const SubmitButton = ({ children }: { children: React.ReactNode }) => {
   const dispatch = useDispatch<AppDispatch>();
+  const navigate = useNavigate();
   return (
     <AlertDialog>
       <AlertDialogTrigger render={<Button variant="default">{children}</Button>} />
@@ -19,10 +21,10 @@ export const SubmitButton = ({ children }: { children: React.ReactNode }) => {
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Go Back</AlertDialogCancel>
-          <AlertDialogAction onClick={() => {
-            dispatch(syncExamData({ isFinal: true, reason: 'NORMAL' }));
+          <AlertDialogAction onClick={async () => {
+            await dispatch(syncExamData({ isFinal: true, reason: 'NORMAL' }));
             toast.success("Exam Submitted Successfully", { description: "Your answers have been recorded." });
-            window.scrollTo(0,0);
+            navigate('/result');
           }}>Submit</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

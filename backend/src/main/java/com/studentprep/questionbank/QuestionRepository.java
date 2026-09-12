@@ -20,4 +20,5 @@ public interface QuestionRepository extends JpaRepository<Question, UUID> {
     
     long countByContextId(UUID contextId);
     List<Question> findByContextId(UUID contextId);
+    List<Question> findByStatusAndSubjectIdIn(String status, List<UUID> subjectIds);
 }

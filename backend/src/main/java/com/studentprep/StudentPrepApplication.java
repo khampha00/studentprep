@@ -10,6 +10,7 @@ import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
 @EnableAsync
 @EnableScheduling
 @EnableJpaAuditing
+@net.javacrumbs.shedlock.spring.annotation.EnableSchedulerLock(defaultLockAtMostFor = "10m")
 @SpringBootApplication
 public class StudentPrepApplication {
 

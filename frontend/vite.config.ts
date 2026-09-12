@@ -14,7 +14,22 @@ export default defineConfig({
         enabled: true // crucial for testing offline in dev mode
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg}']
+        globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
+        runtimeCaching: [
+          {
+            urlPattern: /\/api\/v1\/exams\/active\/sync/,
+            method: 'POST',
+            handler: 'NetworkOnly',
+            options: {
+              backgroundSync: {
+                name: 'exam-sync-queue',
+                options: {
+                  maxRetentionTime: 24 * 60 // 24 hours
+                }
+              }
+            }
+          }
+        ]
       },
       manifest: {
         name: 'StudentPrep CBT',

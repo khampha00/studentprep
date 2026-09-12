@@ -16,7 +16,7 @@ import lombok.Setter;
 @Table(name = "question_contexts")
 public class QuestionContext extends BaseEntity {
 
-    @ManyToOne(fetch = FetchType.LAZY)
+    @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "subject_id")
     private Subject subject;
 

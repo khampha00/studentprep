@@ -6,38 +6,54 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import jakarta.validation.Valid;
 import java.util.UUID;
+import java.util.Map;
+import java.time.Instant;
+import com.studentprep.common.ApiResponse;
 
 @RestController
 @RequestMapping("/api/v1/exams")
 public class ExamController {
 
     private final ExamService examService;
+    private final com.studentprep.student.StudentRepository studentRepository;
 
-    public ExamController(ExamService examService) {
+    public ExamController(ExamService examService, com.studentprep.student.StudentRepository studentRepository) {
         this.examService = examService;
+        this.studentRepository = studentRepository;
+    }
+    
+    private UUID getCurrentStudentId() {
+        org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        String identifier = auth.getName();
+        return studentRepository.findByRegistrationNumber(identifier)
+                .map(com.studentprep.student.Student::getId)
+                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.UNAUTHORIZED, "Student not found"));
     }
     
     @GetMapping("/active/payload")
-    public ResponseEntity<java.util.Map<String, Object>> getActivePayload() {
-        java.util.Map<String, Object> wrapper = new java.util.HashMap<>();
-        wrapper.put("data", examService.getActivePayload());
-        return ResponseEntity.ok(wrapper);
+    public ResponseEntity<ApiResponse<com.studentprep.exam.dto.ExamPayloadResponse>> getActivePayload() {
+        return ResponseEntity.ok(ApiResponse.of(examService.getActivePayload(getCurrentStudentId())));
     }
     
     @PostMapping("/start")
-    public ResponseEntity<ExamStartResponse> startExam(@RequestParam UUID userId) {
-        return ResponseEntity.ok(examService.startExam(userId));
+    public ResponseEntity<ApiResponse<ExamStartResponse>> startExam() {
+        return ResponseEntity.ok(ApiResponse.of(examService.startExam(getCurrentStudentId())));
     }
 
-    @PostMapping("/{sessionId}/sync")
-    public ResponseEntity<Void> syncExam(@PathVariable UUID sessionId, @Valid @RequestBody ExamSyncRequest request) {
-        examService.syncExam(sessionId, request);
-        return ResponseEntity.ok().build();
+    @PostMapping("/active/sync")
+    public ResponseEntity<ApiResponse<Map<String, String>>> syncExam(@RequestParam UUID sessionId, @Valid @RequestBody ExamSyncRequest request) {
+        examService.syncExam(sessionId, getCurrentStudentId(), request);
+        return ResponseEntity.ok(ApiResponse.of(Map.of("status", "SYNCED", "serverTime", Instant.now().toString())));
     }
 
-    @PostMapping("/{sessionId}/submit")
-    public ResponseEntity<Void> submitExam(@PathVariable UUID sessionId) {
-        examService.submitExam(sessionId);
-        return ResponseEntity.ok().build();
+    @PostMapping("/active/submit")
+    public ResponseEntity<ApiResponse<Map<String, String>>> submitExam(@RequestParam UUID sessionId) {
+        examService.submitExam(sessionId, getCurrentStudentId());
+        return ResponseEntity.ok(ApiResponse.of(Map.of("status", "SUBMITTED", "serverTime", Instant.now().toString())));
+    }
+
+    @GetMapping("/active/session")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getActiveSession() {
+        return ResponseEntity.ok(ApiResponse.of(examService.getActiveSession(getCurrentStudentId())));
     }
 }

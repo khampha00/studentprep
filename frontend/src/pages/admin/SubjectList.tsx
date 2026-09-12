@@ -31,7 +31,7 @@ export default function SubjectList() {
   const fetchSubjects = async () => {
     try {
       const res = await axios.get('/api/v1/admin/subjects');
-      setSubjects(res.data);
+      setSubjects(res.data.data);
     } catch (e) {
       console.error(e);
       toast.error('Failed to fetch subjects');

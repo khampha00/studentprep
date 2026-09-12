@@ -6,6 +6,8 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.UUID;
+import com.studentprep.common.ApiResponse;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1")
@@ -21,46 +23,46 @@ public class SubjectController {
     }
 
     @GetMapping("/subjects")
-    public List<Subject> getAllSubjects() {
-        return subjectRepository.findAll();
+    public ResponseEntity<ApiResponse<List<Subject>>> getAllSubjects() {
+        return ResponseEntity.ok(ApiResponse.of(subjectRepository.findAll()));
     }
 
     @GetMapping("/admin/subjects")
-    public List<Subject> getAllSubjectsAdmin() {
-        return subjectRepository.findAll();
+    public ResponseEntity<ApiResponse<List<Subject>>> getAllSubjectsAdmin() {
+        return ResponseEntity.ok(ApiResponse.of(subjectRepository.findAll()));
     }
 
     @PostMapping("/admin/subjects")
-    public ResponseEntity<Subject> createSubject(@RequestBody Subject subject) {
+    public ResponseEntity<ApiResponse<Subject>> createSubject(@RequestBody Subject subject) {
         if (subject.getName() == null || subject.getName().trim().isEmpty()) {
             return ResponseEntity.badRequest().build();
         }
         Subject savedSubject = subjectRepository.save(subject);
-        return ResponseEntity.ok(savedSubject);
+        return ResponseEntity.ok(ApiResponse.of(savedSubject));
     }
 
     @GetMapping("/admin/subjects/{id}")
-    public ResponseEntity<Subject> getSubjectById(@PathVariable UUID id) {
+    public ResponseEntity<ApiResponse<Subject>> getSubjectById(@PathVariable UUID id) {
         return subjectRepository.findById(id)
-                .map(ResponseEntity::ok)
+                .map(s -> ResponseEntity.ok(ApiResponse.of(s)))
                 .orElse(ResponseEntity.notFound().build());
     }
 
     @PutMapping("/admin/subjects/{id}")
-    public ResponseEntity<Subject> updateSubject(@PathVariable UUID id, @RequestBody Subject updatedSubject) {
+    public ResponseEntity<ApiResponse<Subject>> updateSubject(@PathVariable UUID id, @RequestBody Subject updatedSubject) {
         if (updatedSubject.getName() == null || updatedSubject.getName().trim().isEmpty()) {
             return ResponseEntity.badRequest().build();
         }
         return subjectRepository.findById(id)
                 .map(subject -> {
                     subject.setName(updatedSubject.getName());
-                    return ResponseEntity.ok(subjectRepository.save(subject));
+                    return ResponseEntity.ok(ApiResponse.of(subjectRepository.save(subject)));
                 })
                 .orElse(ResponseEntity.notFound().build());
     }
 
     @DeleteMapping("/admin/subjects/{id}")
-    public ResponseEntity<Void> deleteSubject(@PathVariable UUID id) {
+    public ResponseEntity<ApiResponse<Map<String, String>>> deleteSubject(@PathVariable UUID id) {
         if (!subjectRepository.existsById(id)) {
             return ResponseEntity.notFound().build();
         }
@@ -70,6 +72,6 @@ public class SubjectController {
         }
 
         subjectRepository.deleteById(id);
-        return ResponseEntity.noContent().build();
+        return ResponseEntity.ok(ApiResponse.of(Map.of("status", "DELETED")));
     }
 }

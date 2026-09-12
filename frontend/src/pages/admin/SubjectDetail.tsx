@@ -46,8 +46,8 @@ export default function SubjectDetail() {
 
     const intervalId = setInterval(async () => {
       try {
-        const res = await axios.get(`/api/v1/admin/ingest/jobs/${uploadingJobId}`);
-        const { status, totalChunks, processedChunks, errorMessage } = res.data;
+        const res = await axios.get(`/api/v1/admin/ingestion/jobs/${uploadingJobId}`);
+        const { status, totalChunks, processedChunks, errorMessage } = res.data.data;
 
         setJobTotalChunks(totalChunks || 0);
         setJobProcessedChunks(processedChunks || 0);
@@ -77,7 +77,7 @@ export default function SubjectDetail() {
   const fetchSubject = async () => {
     try {
       const res = await axios.get(`/api/v1/admin/subjects/${id}`);
-      setSubject(res.data);
+      setSubject(res.data.data);
     } catch (e) {
       toast.error('Failed to fetch subject details');
       navigate('/admin/subjects');
@@ -87,7 +87,7 @@ export default function SubjectDetail() {
   const fetchActiveQuestions = async () => {
     try {
       const res = await axios.get(`/api/v1/admin/questions?status=ACTIVE&subjectId=${id}`);
-      setActiveQuestions(res.data);
+      setActiveQuestions(res.data.data);
     } catch (e) {
       toast.error('Failed to fetch active questions');
     }
@@ -96,7 +96,7 @@ export default function SubjectDetail() {
   const fetchDraftQuestions = async () => {
     try {
       const res = await axios.get(`/api/v1/admin/questions?status=DRAFT&subjectId=${id}`);
-      setDraftQuestions(res.data);
+      setDraftQuestions(res.data.data);
     } catch (e) {
       toast.error('Failed to fetch draft questions');
     }
@@ -111,9 +111,9 @@ export default function SubjectDetail() {
     formData.append('file', file);
     formData.append('subjectId', id);
     try {
-      const res = await axios.post('/api/v1/admin/ingest/pdf', formData);
-      if (res.data && res.data.jobId) {
-        setUploadingJobId(res.data.jobId);
+      const res = await axios.post('/api/v1/admin/ingestion/pdf', formData);
+      if (res.data.data && res.data.data.jobId) {
+        setUploadingJobId(res.data.data.jobId);
         setJobProcessedChunks(0);
         setJobTotalChunks(0);
       } else {
@@ -173,8 +173,8 @@ export default function SubjectDetail() {
       await fetchActiveQuestions();
       toast.success(`Successfully approved all drafts`);
     } catch (e: any) {
-      if (e.response?.data && typeof e.response.data === 'string') {
-        toast.error(e.response.data);
+      if (e.response?.data && typeof e.response.data.data === 'string') {
+        toast.error(e.response.data.data);
       } else {
         toast.error('Failed to bulk approve drafts');
       }
@@ -650,8 +650,8 @@ function DraftQuestionCard({ initialQuestion, idx, onApprove, onReject, onUngrou
     const formData = new FormData();
     formData.append('file', file);
     try {
-      const res = await axios.post('/api/v1/admin/ingest/assets', formData);
-      const url = res.data.url;
+      const res = await axios.post('/api/v1/admin/ingestion/assets', formData);
+      const url = res.data.data.url;
       setQ((prev: any) => {
         const updated = { ...prev, content: { ...prev.content } };
         if (!updated.content.assets) updated.content.assets = [];

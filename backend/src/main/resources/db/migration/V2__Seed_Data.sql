@@ -1,6 +1,6 @@
--- Insert Admin User (Bcrypt hash for 'admin123')
+-- Insert Admin User (Argon2id hash for 'admin123')
 INSERT INTO users (id, identifier, pin_hash, role) 
-VALUES ('11111111-1111-1111-1111-111111111111', 'ADMIN-001', '$2a$10$xbT2SZkQEnHGf9wGFWxLu.K6vSiOzmG6f3AWcqsnT/8J0lcBuECse', 'ROLE_ADMIN');
+VALUES ('11111111-1111-1111-1111-111111111111', 'ADMIN-001', '$argon2id$v=19$m=16384,t=2,p=1$rqXBKJfgPQ9gL6sh+pULog$80vfQbWJEHWH3ehXW4YmhHZN8HGNDR/i9PsKYdA87bU', 'ROLE_ADMIN');
 
 -- Insert Dummy Questions (JSONB structured as per FSD)
 

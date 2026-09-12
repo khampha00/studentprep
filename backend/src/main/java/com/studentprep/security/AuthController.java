@@ -8,20 +8,27 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.web.bind.annotation.*;
 import jakarta.validation.Valid;
+import java.util.Map;
+import java.util.UUID;
+import java.time.Duration;
+import com.studentprep.common.ApiResponse;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 @RestController
 @RequestMapping("/api/v1/auth")
 public class AuthController {
     private final AuthenticationManager authenticationManager;
     private final JwtUtil jwtUtil;
+    private final StringRedisTemplate redisTemplate;
 
-    public AuthController(AuthenticationManager authenticationManager, JwtUtil jwtUtil) {
+    public AuthController(AuthenticationManager authenticationManager, JwtUtil jwtUtil, StringRedisTemplate redisTemplate) {
         this.authenticationManager = authenticationManager;
         this.jwtUtil = jwtUtil;
+        this.redisTemplate = redisTemplate;
     }
 
     @PostMapping("/login")
-    public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
+    public ResponseEntity<ApiResponse<Map<String, Object>>> login(@Valid @RequestBody LoginRequest request) {
         Authentication authentication = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(request.identifier(), request.pin())
         );
@@ -29,7 +36,42 @@ public class AuthController {
                 .map(GrantedAuthority::getAuthority)
                 .findFirst()
                 .orElse("ROLE_STUDENT");
-        String token = jwtUtil.generateToken(request.identifier(), role);
-        return ResponseEntity.ok(new LoginResponse(token, role));
+                
+        String jti = UUID.randomUUID().toString();
+        String token = jwtUtil.generateToken(request.identifier(), role, jti);
+        String refreshToken = jwtUtil.generateRefreshToken(request.identifier(), role, jti);
+        
+        redisTemplate.opsForValue().set("session:" + request.identifier(), jti, Duration.ofDays(7));
+
+        org.springframework.http.ResponseCookie cookie = org.springframework.http.ResponseCookie.from("refreshToken", refreshToken)
+                .httpOnly(true)
+                .secure(true)
+                .sameSite("Strict")
+                .path("/api/v1/auth/refresh")
+                .maxAge(7 * 24 * 60 * 60)
+                .build();
+
+        return ResponseEntity.ok()
+                .header(org.springframework.http.HttpHeaders.SET_COOKIE, cookie.toString())
+                .body(ApiResponse.of(Map.of("accessToken", token, "expiresIn", 900, "role", role)));
+    }
+
+    @PostMapping("/refresh")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> refresh(@CookieValue(name = "refreshToken", required = false) String refreshToken) {
+        if (refreshToken == null || !jwtUtil.isTokenValid(refreshToken)) {
+            return ResponseEntity.status(401).build();
+        }
+        String identifier = jwtUtil.extractIdentifier(refreshToken);
+        String role = jwtUtil.extractRole(refreshToken);
+        String jti = jwtUtil.extractJti(refreshToken);
+        
+        String storedJti = redisTemplate.opsForValue().get("session:" + identifier);
+        if (storedJti == null || !storedJti.equals(jti)) {
+            return ResponseEntity.status(401).build();
+        }
+        
+        String newAccessToken = jwtUtil.generateToken(identifier, role, jti);
+        return ResponseEntity.ok(ApiResponse.of(Map.of("accessToken", newAccessToken, "expiresIn", 900, "role", role)));
     }
 }
+

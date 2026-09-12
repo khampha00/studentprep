@@ -31,6 +31,7 @@ public class ExamService {
     private final RedisTemplate<String, Object> redisTemplate;
     private final ApplicationEventPublisher eventPublisher;
     private final ObjectMapper objectMapper;
+    private final com.studentprep.student.StudentRepository studentRepository;
     
     private static final String REDIS_EXAM_PAYLOAD_KEY = "exam:payload:active";
     private static final int EXAM_DURATION_MINUTES = 120; // 2 hours
@@ -38,17 +39,18 @@ public class ExamService {
 
     public ExamService(ExamSessionRepository sessionRepository, QuestionInternalAPI questionAPI,
                        RedisTemplate<String, Object> redisTemplate, ApplicationEventPublisher eventPublisher,
-                       ObjectMapper objectMapper) {
+                       ObjectMapper objectMapper, com.studentprep.student.StudentRepository studentRepository) {
         this.sessionRepository = sessionRepository;
         this.questionAPI = questionAPI;
         this.redisTemplate = redisTemplate;
         this.eventPublisher = eventPublisher;
         this.objectMapper = objectMapper;
+        this.studentRepository = studentRepository;
     }
 
     @Transactional
     public ExamStartResponse startExam(UUID userId) {
-        ExamPayloadResponse payload = getActivePayload();
+        ExamPayloadResponse payload = getActivePayload(userId);
         
         int shuffleSeed = ThreadLocalRandom.current().nextInt(1000, 9999);
 
@@ -68,8 +70,11 @@ public class ExamService {
     }
 
     @Transactional
-    public void syncExam(UUID sessionId, ExamSyncRequest request) {
+    public void syncExam(UUID sessionId, UUID studentId, ExamSyncRequest request) {
         ExamSession session = sessionRepository.findById(sessionId).orElseThrow();
+        if (!session.getUserId().equals(studentId)) {
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN, "Access Denied");
+        }
         if ("SUBMITTED".equals(session.getStatus())) {
             throw new IllegalStateException("Cannot sync a submitted exam.");
         }
@@ -84,8 +89,11 @@ public class ExamService {
     }
 
     @Transactional
-    public void submitExam(UUID sessionId) {
+    public void submitExam(UUID sessionId, UUID studentId) {
         ExamSession session = sessionRepository.findById(sessionId).orElseThrow();
+        if (!session.getUserId().equals(studentId)) {
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN, "Access Denied");
+        }
         
         if ("SUBMITTED".equals(session.getStatus())) {
             throw new IllegalStateException("Exam is already submitted.");
@@ -109,21 +117,35 @@ public class ExamService {
     }
 
     @Transactional(readOnly = true)
-    public ExamPayloadResponse getActivePayload() {
+    public ExamPayloadResponse getActivePayload(UUID userId) {
         @SuppressWarnings("unchecked")
-        ExamPayloadResponse cached = (ExamPayloadResponse) redisTemplate.opsForValue().get(REDIS_EXAM_PAYLOAD_KEY);
-        if (cached != null) {
-            return cached;
+        List<Question> cachedQuestions = (List<Question>) redisTemplate.opsForValue().get("exam:questions:all");
+        if (cachedQuestions == null) {
+            cachedQuestions = questionAPI.getActiveQuestions();
+            redisTemplate.opsForValue().set("exam:questions:all", cachedQuestions);
         }
 
-        ExamPayloadResponse generated = generateStrippedPayload();
-        redisTemplate.opsForValue().set(REDIS_EXAM_PAYLOAD_KEY, generated);
-        return generated;
+        com.studentprep.student.Student student = studentRepository.findById(userId).orElse(null);
+        List<String> enrolledSubjectIds = new ArrayList<>();
+        if (student != null) {
+            for (com.studentprep.questionbank.Subject subject : student.getSubjects()) {
+                enrolledSubjectIds.add(subject.getId().toString());
+            }
+        }
+
+        List<Question> filteredQuestions = new ArrayList<>();
+        for (Question q : cachedQuestions) {
+            if (student == null || q.getSubject() == null) {
+                filteredQuestions.add(q);
+            } else if (enrolledSubjectIds.contains(q.getSubject().getId().toString())) {
+                filteredQuestions.add(q);
+            }
+        }
+
+        return generateStrippedPayload(filteredQuestions);
     }
 
-    private ExamPayloadResponse generateStrippedPayload() {
-        List<Question> questions = questionAPI.getActiveQuestions();
-        
+    private ExamPayloadResponse generateStrippedPayload(List<Question> questions) {
         List<Object> strippedQuestions = new ArrayList<>();
         Map<String, String> contextsMap = new HashMap<>();
         
@@ -168,5 +190,25 @@ public class ExamService {
         response.setQuestions(strippedQuestions);
         response.setContexts(contextsMap);
         return response;
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> getActiveSession(UUID userId) {
+        return sessionRepository.findByUserIdAndStatus(userId, "IN_PROGRESS")
+            .map(session -> {
+                Map<String, Object> result = new HashMap<>();
+                result.put("sessionId", session.getId());
+                result.put("status", session.getStatus());
+                result.put("startTime", session.getStartTime().toString());
+                result.put("shuffleSeed", session.getShuffleSeed());
+                if (session.getStatePayload() != null) {
+                    result.put("answers", session.getStatePayload().get("answers"));
+                    result.put("timeLeft", session.getStatePayload().get("timeLeft"));
+                    result.put("lastSyncedAt", session.getStatePayload().get("lastUpdated"));
+                    result.put("tabSwitchCount", session.getStatePayload().get("tabSwitchCount"));
+                }
+                return result;
+            })
+            .orElse(null);
     }
 }

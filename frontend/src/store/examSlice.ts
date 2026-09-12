@@ -35,11 +35,11 @@ const initialState: ExamState = {
 
 export const initializeExam = createAsyncThunk(
   'exam/initialize',
-  async ({ sessionId, userId }: { sessionId: string, userId: string }) => {
+  async ({ sessionId }: { sessionId: string }) => {
     const localState = await db.examStates.get(sessionId);
     try {
-        const response = await axios.post(`/api/v1/exams/start?userId=` + userId);
-        const serverSeed = response.data.shuffleSeed;
+        const response = await axios.post(`/api/v1/exams/start`);
+        const serverSeed = response.data.data.shuffleSeed;
         
         if (localState && localState.lastUpdated > 0) {
            return localState; // Offline-first / Rehydration
@@ -79,7 +79,7 @@ export const syncExamData = createAsyncThunk(
                 });
             }
 
-            await axios.post(`/api/v1/exams/` + state.sessionId + `/sync`, {
+            await axios.post(`/api/v1/exams/active/sync?sessionId=` + state.sessionId, {
                 statePayload: {
                     answers: state.answers,
                     timeLeft: state.timeLeft,
@@ -89,6 +89,9 @@ export const syncExamData = createAsyncThunk(
                 }
             });
             await db.examStates.update(state.sessionId, { isSynced: true });
+            if (isFinalSync) {
+                await axios.post(`/api/v1/exams/active/submit?sessionId=` + state.sessionId);
+            }
             return true;
         } catch (e) {
             console.error("Sync failed. Data is queued in IndexedDB.", e);
@@ -158,8 +161,33 @@ const examSlice = createSlice({
           state.syncStatus = action.payload ? 'synced' : 'error'; 
       });
       builder.addCase(syncExamData.rejected, (state) => { state.syncStatus = 'error'; });
+      builder.addCase(hydrateFromServer.fulfilled, (state, action) => {
+          if (action.payload) {
+              state.answers = action.payload.answers || state.answers;
+              state.timeLeft = action.payload.timeLeft ?? state.timeLeft;
+              state.lastUpdated = action.payload.lastSyncedAt;
+          }
+      });
   }
 });
+
+export const hydrateFromServer = createAsyncThunk(
+    'exam/hydrateFromServer',
+    async (_, { getState }) => {
+        interface RootStateType { exam: ExamState; }
+        const state = (getState() as RootStateType).exam;
+        try {
+            const response = await axios.get('/api/v1/exams/active/session');
+            const serverState = response.data.data;
+            if (serverState && serverState.lastSyncedAt > state.lastUpdated) {
+                return serverState;
+            }
+            return null;
+        } catch (e) {
+            return null;
+        }
+    }
+);
 
 export const { answerQuestion, tickTimer, recordViolation, acknowledgeWarning } = examSlice.actions;
 export default examSlice.reducer;

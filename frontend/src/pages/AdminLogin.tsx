@@ -14,7 +14,7 @@ export default function AdminLogin() {
     setIsLoading(true);
     try {
       const res = await axios.post('/api/v1/auth/login', { identifier, pin });
-      const token = res.data.token;
+      const token = res.data.data.accessToken;
       if (token) {
         localStorage.setItem('token', token);
         window.location.href = '/admin';

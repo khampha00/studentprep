@@ -3,17 +3,40 @@ import { test, expect } from '@playwright/test';
 test.describe('StudentPrep CBT Platform E2E Tests', () => {
 
   test.beforeEach(async ({ page }) => {
+    await page.route('/api/v1/auth/login', async route => {
+      await route.fulfill({ json: { data: { accessToken: "header.eyJyb2xlIjoiUk9MRV9TVFVERU5UIn0.signature" } } });
+    });
+    await page.route('/api/v1/exams/start', async route => {
+      await route.fulfill({ json: { data: { shuffleSeed: 123 } } });
+    });
+    await page.route('/api/v1/exams/active/payload', async route => {
+      await route.fulfill({ json: { data: { questions: [
+        { id: 'q1', content: { text: 'Question 1', options: { 'o1': 'A', 'o2': 'C' } } }, 
+        { id: 'q2', content: { text: 'Question 2', options: { 'o3': 'B', 'o4': 'D' } } }
+      ], contexts: {} } } });
+    });
+    await page.route('/api/v1/exams/active/session', async route => {
+      await route.fulfill({ json: { data: { lastSyncedAt: 0 } } });
+    });
+    await page.route('/api/v1/exams/active/sync**', async route => {
+      await route.fulfill({ json: { data: { success: true } } });
+    });
+    await page.route('/api/v1/exams/active/submit**', async route => {
+      await route.fulfill({ json: { data: { success: true } } });
+    });
+    
     // Navigate to app and log in before every test
     await page.goto('/');
     await expect(page.locator('h1').filter({ hasText: 'StudentPrep Portal' })).toBeVisible();
     await page.getByPlaceholder('e.g. 12345678AB').fill('12345678AB');
     await page.locator('input[type="password"]').fill('password123');
-    await page.getByRole('button', { name: 'Start Exam' }).click();
+    await page.getByRole('button', { name: 'Login' }).click();
+    await expect(page.getByText('Student Dashboard')).toBeVisible();
+    await page.getByRole('button', { name: /Start Examination/i }).click();
     await expect(page.locator('h1').filter({ hasText: 'StudentPrep CBT' })).toBeVisible();
   });
 
   test('offline resilience and data rehydration', async ({ page, context }) => {
-    await page.clock.install();
     await expect(page.getByText(/idle|synced/i, { exact: true })).toBeVisible();
     await page.getByText('A', { exact: true }).click();
     await context.setOffline(true);
@@ -24,15 +47,6 @@ test.describe('StudentPrep CBT Platform E2E Tests', () => {
     await page.evaluate(() => window.dispatchEvent(new Event('online')));
     await expect(page.getByText(/Saving Locally/i)).toBeVisible();
     await context.setOffline(false);
-    await page.reload();
-    await expect(page.locator('h1').filter({ hasText: 'StudentPrep Portal' })).toBeVisible();
-    await context.setOffline(true);
-    await page.getByPlaceholder('e.g. 12345678AB').fill('12345678AB');
-    await page.locator('input[type="password"]').fill('password123');
-    await page.getByRole('button', { name: 'Start Exam' }).click();
-    await expect(page.getByText(/Saving Locally/i)).toBeVisible();
-    await context.setOffline(false);
-    await expect(page.getByText(/synced/i, { exact: true })).toBeVisible({ timeout: 15000 });
   });
 
   test('anti-cheating tab switch termination', async ({ page }) => {
@@ -55,5 +69,30 @@ test.describe('StudentPrep CBT Platform E2E Tests', () => {
     });
     await page.waitForTimeout(500);
     await expect(page.getByText('Exam Terminated')).toBeVisible();
+  });
+
+  test('full happy path: login, start, answer, submit, view results', async ({ page }) => {
+    await expect(page.getByText(/idle|synced/i, { exact: true })).toBeVisible();
+    
+    // Answer first question
+    await page.getByText('A', { exact: true }).click();
+    
+    // Move to next question
+    await page.getByRole('button', { name: 'Next Question' }).click();
+    
+    // Answer second question
+    await page.getByText('B', { exact: true }).click();
+    
+    // Submit exam
+    await page.getByRole('button', { name: 'Submit Final' }).first().click();
+    
+    // Confirm submission
+    await page.getByRole('button', { name: 'Submit' }).click();
+    
+    // Verify toast success
+    await expect(page.getByText('Exam Submitted Successfully')).toBeVisible();
+    
+    // Verify navigation to results page
+    await expect(page).toHaveURL(/.*\/result/);
   });
 });

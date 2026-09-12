@@ -30,12 +30,24 @@ public class JwtUtil {
         return Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
 
-    public String generateToken(String identifier, String role) {
+    public String generateToken(String identifier, String role, String jti) {
         return Jwts.builder()
+                .id(jti)
                 .subject(identifier)
                 .claim("role", role)
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + expirationMs))
+                .signWith(getSigningKey())
+                .compact();
+    }
+
+    public String generateRefreshToken(String identifier, String role, String jti) {
+        return Jwts.builder()
+                .id(jti)
+                .subject(identifier)
+                .claim("role", role)
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + (7L * 24 * 60 * 60 * 1000))) // 7 days
                 .signWith(getSigningKey())
                 .compact();
     }
@@ -46,6 +58,10 @@ public class JwtUtil {
 
     public String extractRole(String token) {
         return getClaims(token).get("role", String.class);
+    }
+
+    public String extractJti(String token) {
+        return getClaims(token).getId();
     }
 
     public boolean isTokenValid(String token) {
