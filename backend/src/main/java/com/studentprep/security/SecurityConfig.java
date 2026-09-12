@@ -13,6 +13,12 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.security.config.Customizer;
+
+import java.util.List;
 
 @Configuration
 @EnableWebSecurity
@@ -29,13 +35,13 @@ public class SecurityConfig {
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         return http
             .csrf(AbstractHttpConfigurer::disable)
-            .cors(org.springframework.security.config.Customizer.withDefaults())
+            .cors(Customizer.withDefaults())
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/v1/auth/login").permitAll()
                 .requestMatchers("/api/v1/exams/**").permitAll()
                 .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
-                .anyRequest().permitAll()
+                .anyRequest().authenticated()
             )
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
             .build();
@@ -52,12 +58,12 @@ public class SecurityConfig {
     }
 
     @Bean
-    public org.springframework.web.cors.CorsConfigurationSource corsConfigurationSource() {
-        org.springframework.web.cors.CorsConfiguration configuration = new org.springframework.web.cors.CorsConfiguration();
-        configuration.setAllowedOrigins(java.util.List.of("*"));
-        configuration.setAllowedMethods(java.util.List.of("*"));
-        configuration.setAllowedHeaders(java.util.List.of("*"));
-        org.springframework.web.cors.UrlBasedCorsConfigurationSource source = new org.springframework.web.cors.UrlBasedCorsConfigurationSource();
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration configuration = new CorsConfiguration();
+        configuration.setAllowedOrigins(List.of("http://localhost:5173", "http://localhost:3000"));
+        configuration.setAllowedMethods(List.of("*"));
+        configuration.setAllowedHeaders(List.of("*"));
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);
         return source;
     }

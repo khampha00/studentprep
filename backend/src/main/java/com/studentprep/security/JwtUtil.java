@@ -5,6 +5,11 @@ import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.MalformedJwtException;
+import io.jsonwebtoken.security.SecurityException;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
@@ -12,6 +17,8 @@ import java.util.Date;
 
 @Component
 public class JwtUtil {
+
+    private static final Logger log = LoggerFactory.getLogger(JwtUtil.class);
 
     @Value("${security.jwt.secret}")
     private String secret;
@@ -45,7 +52,14 @@ public class JwtUtil {
         try {
             getClaims(token);
             return true;
+        } catch (ExpiredJwtException e) {
+            log.warn("JWT token expired: {}", e.getMessage());
+            return false;
+        } catch (SecurityException | MalformedJwtException e) {
+            log.warn("Invalid JWT token: {}", e.getMessage());
+            return false;
         } catch (Exception e) {
+            log.error("Unexpected JWT validation error", e);
             return false;
         }
     }

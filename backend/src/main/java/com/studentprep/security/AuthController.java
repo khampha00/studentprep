@@ -7,6 +7,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.web.bind.annotation.*;
+import jakarta.validation.Valid;
 
 @RestController
 @RequestMapping("/api/v1/auth")
@@ -20,7 +21,7 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<LoginResponse> login(@RequestBody LoginRequest request) {
+    public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
         Authentication authentication = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(request.identifier(), request.pin())
         );

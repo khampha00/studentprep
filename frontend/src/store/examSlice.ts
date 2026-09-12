@@ -1,11 +1,12 @@
 import { createSlice, type PayloadAction, createAsyncThunk } from '@reduxjs/toolkit';
 import { db, type LocalExamState } from './db';
 import axios from 'axios';
+import type { ExamQuestion } from '../types/exam';
 
-interface ExamState {
+export interface ExamState {
   sessionId: string | null;
   shuffleSeed: number | null;
-  questions: any[];
+  questions: ExamQuestion[];
   contexts: Record<string, string>;
   answers: Record<string, string>;
   timeLeft: number;
@@ -14,6 +15,7 @@ interface ExamState {
   tabSwitchCount: number;
   isExamTerminated: boolean;
   showWarningModal: boolean;
+  payloadError: string | null;
 }
 
 const initialState: ExamState = {
@@ -28,6 +30,7 @@ const initialState: ExamState = {
   tabSwitchCount: 0,
   isExamTerminated: false,
   showWarningModal: false,
+  payloadError: null,
 };
 
 export const initializeExam = createAsyncThunk(
@@ -60,7 +63,8 @@ export const initializeExam = createAsyncThunk(
 export const syncExamData = createAsyncThunk(
     'exam/sync',
     async (payload: { isFinal?: boolean, reason?: string } | undefined, { getState }) => {
-        const state = (getState() as any).exam as ExamState;
+        interface RootStateType { exam: ExamState; }
+        const state = (getState() as RootStateType).exam;
         if (!state.sessionId) return false;
         
         const isFinalSync = payload?.isFinal || state.isExamTerminated;
@@ -145,6 +149,9 @@ const examSlice = createSlice({
       builder.addCase(fetchExamPayload.fulfilled, (state, action) => {
           state.questions = action.payload.questions;
           state.contexts = action.payload.contexts;
+      });
+      builder.addCase(fetchExamPayload.rejected, (state, action) => {
+          state.payloadError = action.error.message || 'Failed to load exam questions';
       });
       builder.addCase(syncExamData.pending, (state) => { state.syncStatus = 'syncing'; });
       builder.addCase(syncExamData.fulfilled, (state, action) => { 

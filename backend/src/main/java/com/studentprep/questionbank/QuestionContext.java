@@ -5,6 +5,7 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.Setter;
@@ -15,7 +16,7 @@ import lombok.Setter;
 @Table(name = "question_contexts")
 public class QuestionContext extends BaseEntity {
 
-    @ManyToOne
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "subject_id")
     private Subject subject;
 

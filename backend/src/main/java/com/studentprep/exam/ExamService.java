@@ -2,7 +2,11 @@ package com.studentprep.exam;
 
 import com.studentprep.exam.dto.ExamStartResponse;
 import com.studentprep.exam.dto.ExamSyncRequest;
+import com.studentprep.exam.dto.ExamPayloadResponse;
 import com.studentprep.questionbank.QuestionInternalAPI;
+import com.studentprep.questionbank.Question;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.type.TypeReference;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
@@ -13,6 +17,10 @@ import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Random;
 import java.util.concurrent.ThreadLocalRandom;
 
 @Service
@@ -22,21 +30,25 @@ public class ExamService {
     private final QuestionInternalAPI questionAPI;
     private final RedisTemplate<String, Object> redisTemplate;
     private final ApplicationEventPublisher eventPublisher;
+    private final ObjectMapper objectMapper;
     
     private static final String REDIS_EXAM_PAYLOAD_KEY = "exam:payload:active";
     private static final int EXAM_DURATION_MINUTES = 120; // 2 hours
+    private static final int LATE_SUBMISSION_GRACE_SECONDS = 10;
 
     public ExamService(ExamSessionRepository sessionRepository, QuestionInternalAPI questionAPI,
-                       RedisTemplate<String, Object> redisTemplate, ApplicationEventPublisher eventPublisher) {
+                       RedisTemplate<String, Object> redisTemplate, ApplicationEventPublisher eventPublisher,
+                       ObjectMapper objectMapper) {
         this.sessionRepository = sessionRepository;
         this.questionAPI = questionAPI;
         this.redisTemplate = redisTemplate;
         this.eventPublisher = eventPublisher;
+        this.objectMapper = objectMapper;
     }
 
     @Transactional
     public ExamStartResponse startExam(UUID userId) {
-        com.studentprep.exam.dto.ExamPayloadResponse payload = getActivePayload();
+        ExamPayloadResponse payload = getActivePayload();
         
         int shuffleSeed = ThreadLocalRandom.current().nextInt(1000, 9999);
 
@@ -83,7 +95,7 @@ public class ExamService {
         Instant now = Instant.now();
         
         // FSD 4.2: Validate against Server Time (10-second grace period)
-        if (now.isAfter(expectedEndTime.plus(10, ChronoUnit.SECONDS))) {
+        if (now.isAfter(expectedEndTime.plus(LATE_SUBMISSION_GRACE_SECONDS, ChronoUnit.SECONDS))) {
             session.setStatus("LATE_SUBMISSION_FLAGGED");
         } else {
             session.setStatus("SUBMITTED");
@@ -97,33 +109,31 @@ public class ExamService {
     }
 
     @Transactional(readOnly = true)
-    public com.studentprep.exam.dto.ExamPayloadResponse getActivePayload() {
+    public ExamPayloadResponse getActivePayload() {
         @SuppressWarnings("unchecked")
-        com.studentprep.exam.dto.ExamPayloadResponse cached = (com.studentprep.exam.dto.ExamPayloadResponse) redisTemplate.opsForValue().get(REDIS_EXAM_PAYLOAD_KEY);
+        ExamPayloadResponse cached = (ExamPayloadResponse) redisTemplate.opsForValue().get(REDIS_EXAM_PAYLOAD_KEY);
         if (cached != null) {
             return cached;
         }
 
-        com.studentprep.exam.dto.ExamPayloadResponse generated = generateStrippedPayload();
+        ExamPayloadResponse generated = generateStrippedPayload();
         redisTemplate.opsForValue().set(REDIS_EXAM_PAYLOAD_KEY, generated);
         return generated;
     }
 
-    private com.studentprep.exam.dto.ExamPayloadResponse generateStrippedPayload() {
-        java.util.List<com.studentprep.questionbank.Question> questions = questionAPI.getActiveQuestions();
+    private ExamPayloadResponse generateStrippedPayload() {
+        List<Question> questions = questionAPI.getActiveQuestions();
         
-        java.util.List<Object> strippedQuestions = new java.util.ArrayList<>();
-        Map<String, String> contextsMap = new java.util.HashMap<>();
-        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-        mapper.registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
+        List<Object> strippedQuestions = new ArrayList<>();
+        Map<String, String> contextsMap = new HashMap<>();
         
-        Map<String, java.util.List<Object>> groupedQuestions = new java.util.HashMap<>();
-        java.util.List<Object> standaloneQuestions = new java.util.ArrayList<>();
+        Map<String, List<Object>> groupedQuestions = new HashMap<>();
+        List<Object> standaloneQuestions = new ArrayList<>();
 
         long hashSeed = 0;
-        for (com.studentprep.questionbank.Question q : questions) {
+        for (Question q : questions) {
             hashSeed += q.getId().hashCode();
-            Map<String, Object> map = mapper.convertValue(q, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+            Map<String, Object> map = this.objectMapper.convertValue(q, new TypeReference<Map<String, Object>>() {});
             Map<String, Object> content = (Map<String, Object>) map.get("content");
             if (content != null) {
                 content.remove("correctOption");
@@ -132,26 +142,26 @@ public class ExamService {
                 String ctxId = q.getContext().getId().toString();
                 map.put("contextId", ctxId);
                 contextsMap.put(ctxId, q.getContext().getPassage());
-                groupedQuestions.computeIfAbsent(ctxId, k -> new java.util.ArrayList<>()).add(map);
+                groupedQuestions.computeIfAbsent(ctxId, k -> new ArrayList<>()).add(map);
             } else {
                 standaloneQuestions.add(map);
             }
         }
         
-        java.util.List<java.util.List<Object>> allGroups = new java.util.ArrayList<>();
+        List<List<Object>> allGroups = new ArrayList<>();
         allGroups.addAll(groupedQuestions.values());
         for (Object sq : standaloneQuestions) {
-            allGroups.add(java.util.Collections.singletonList(sq));
+            allGroups.add(Collections.singletonList(sq));
         }
         
         long seed = hashSeed == 0 ? 12345L : hashSeed;
-        java.util.Collections.shuffle(allGroups, new java.util.Random(seed));
+        Collections.shuffle(allGroups, new Random(seed));
         
-        for (java.util.List<Object> group : allGroups) {
+        for (List<Object> group : allGroups) {
             strippedQuestions.addAll(group);
         }
         
-        com.studentprep.exam.dto.ExamPayloadResponse response = new com.studentprep.exam.dto.ExamPayloadResponse();
+        ExamPayloadResponse response = new ExamPayloadResponse();
         response.setExamId(UUID.randomUUID());
         response.setShuffleSeed(seed);
         response.setDurationMinutes(EXAM_DURATION_MINUTES);

@@ -5,6 +5,7 @@ import io.hypersistence.utils.hibernate.type.json.JsonType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import lombok.Getter;
 import lombok.Setter;
 import org.hibernate.annotations.Type;
@@ -24,9 +25,11 @@ public class ExamSession extends BaseEntity {
 
     private Instant startTime;
     private Instant endTime;
-    private Instant expectedEndTime;
     private String status;
     private Integer shuffleSeed;
+
+    @Version
+    private Long version;
 
     @Type(JsonType.class)
     @Column(columnDefinition = "jsonb")

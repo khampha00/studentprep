@@ -842,7 +842,7 @@ function DraftQuestionCard({ initialQuestion, idx, onApprove, onReject, onUngrou
             {linkTab === 'EXISTING' ? (
               <div className="space-y-2">
                 <p className="text-sm text-slate-600 mb-2">Select a reading passage to attach this question to:</p>
-                <Select value={selectedContextId} onValueChange={setSelectedContextId}>
+                <Select value={selectedContextId} onValueChange={(val) => setSelectedContextId(val || '')}>
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="-- Select Passage --" />
                   </SelectTrigger>

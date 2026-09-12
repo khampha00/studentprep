@@ -10,7 +10,7 @@
 @theme {
   --color-primary: #008751;
   --color-destructive: #ef4444;
-  --font-sans: "Inter", sans-serif;
+  --font-sans: "Inter Variable", sans-serif;
 }
 
 @layer base {

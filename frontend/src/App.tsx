@@ -3,65 +3,24 @@ import { useDispatch, useSelector } from 'react-redux';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import type { AppDispatch, RootState } from './store/store';
 import { initializeExam, tickTimer, answerQuestion, syncExamData, fetchExamPayload, recordViolation, acknowledgeWarning } from './store/examSlice';
-import { Clock, CheckCircle2, AlertCircle } from 'lucide-react';
+import { CheckCircle2, AlertCircle } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
 import 'katex/dist/katex.min.css';
-import ReactMarkdown from 'react-markdown';
-import remarkMath from 'remark-math';
-import remarkGfm from 'remark-gfm';
-import rehypeKatex from 'rehype-katex';
 
 import { Button } from './components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from './components/ui/card';
 import { RadioGroup, RadioGroupItem } from './components/ui/radio-group';
 import { Label } from './components/ui/label';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from './components/ui/alert-dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from './components/ui/alert-dialog';
 import { Toaster } from './components/ui/sonner';
-import { toast } from 'sonner';
+import RichText from './components/RichText';
+import ExamTimer from './components/ExamTimer';
+import SubmitButton from './components/SubmitButton';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
-}
-
-const SubmitButton = ({ children }: { children: React.ReactNode }) => {
-  const dispatch = useDispatch<AppDispatch>();
-  return (
-    <AlertDialog>
-      <AlertDialogTrigger render={<Button variant="default">{children}</Button>} />
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Submit Exam?</AlertDialogTitle>
-          <AlertDialogDescription>
-            You are about to submit your exam. This action cannot be undone. Are you sure you want to proceed?
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Go Back</AlertDialogCancel>
-          <AlertDialogAction onClick={() => {
-            dispatch(syncExamData({ isFinal: true, reason: 'NORMAL' }));
-            toast.success("Exam Submitted Successfully", { description: "Your answers have been recorded." });
-            window.scrollTo(0,0);
-          }}>Submit</AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  );
-};
-
-function RichText({ text }: { text: string }) {
-  const processedText = text.replace(/\\\((.*?)\\\)/g, '$$$1$$');
-  return (
-    <div className="prose prose-slate max-w-none">
-      <ReactMarkdown
-        remarkPlugins={[remarkMath, remarkGfm]}
-        rehypePlugins={[rehypeKatex]}
-      >
-        {processedText}
-      </ReactMarkdown>
-    </div>
-  );
 }
 
 function RequiredAsterisk() {
@@ -144,17 +103,14 @@ function ExamDashboard() {
     return () => window.removeEventListener('online', handleOnline);
   }, [dispatch]);
 
-  const formatTime = (seconds: number) => {
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = seconds % 60;
-    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  };
-
   const questions = useSelector((state: RootState) => state.exam.questions);
   const [currentIdx, setCurrentIdx] = useState(0);
   const currentQ = questions[currentIdx];
   const sharedContext = currentQ?.contextId ? exam.contexts[currentQ.contextId] : null;
+
+  if (exam.payloadError) {
+    return <div className="min-h-screen flex items-center justify-center font-bold text-destructive">{exam.payloadError}</div>;
+  }
 
   if (!questions || questions.length === 0) {
     return <div className="min-h-screen flex items-center justify-center font-bold text-slate-500">Loading Exam...</div>;
@@ -205,10 +161,7 @@ function ExamDashboard() {
                   {exam.syncStatus === 'error' ? 'Saving Locally' : exam.syncStatus}
                 </span>
               </div>
-            <div className={cn("flex items-center gap-2 font-mono text-xl font-bold px-4 py-1.5 rounded-md", exam.timeLeft < 300 ? "bg-destructive/10 text-destructive" : "bg-slate-100 text-slate-800")}>
-              <Clock className="w-5 h-5" />
-              {formatTime(exam.timeLeft)}
-            </div>
+            <ExamTimer />
             <SubmitButton>Submit Final</SubmitButton>
           </div>
         </div>
@@ -243,6 +196,7 @@ function ExamDashboard() {
                   return (
                     <button 
                       key={idx}
+                      aria-label={`Question ${idx + 1}`}
                       onClick={() => setCurrentIdx(idx)}
                       className={cn(
                         "w-10 h-10 rounded text-sm font-medium flex items-center justify-center transition-colors cursor-pointer border",
@@ -269,7 +223,7 @@ function ExamDashboard() {
           <Card className="p-0 overflow-hidden flex flex-col min-h-[600px] shadow-sm">
             <CardHeader className="flex flex-row justify-between items-center mb-0 border-b p-4 bg-white shrink-0">
               <CardTitle className="text-lg font-bold text-slate-800">Question {currentIdx + 1} of {questions.length}</CardTitle>
-              <span className="bg-slate-100 text-slate-600 px-3 py-1 rounded-full text-xs font-semibold">{currentQ.subject?.name || currentQ.subject}</span>
+              <span className="bg-slate-100 text-slate-600 px-3 py-1 rounded-full text-xs font-semibold">{currentQ.subject?.name || ''}</span>
             </CardHeader>
             <CardContent className="p-0 flex-1 flex flex-col md:flex-row relative">
               {sharedContext && (
@@ -285,7 +239,7 @@ function ExamDashboard() {
                   {currentQ.content.assets && currentQ.content.assets.map((asset: any, i: number) => (
                     asset.type === 'IMAGE' && <img key={i} src={asset.url} alt={asset.alt} className="mb-4 max-w-md" />
                   ))}
-                  <RichText text={currentQ.content.text || currentQ.content.passage || ''} />
+                  <RichText text={currentQ.content.text || ''} />
                 </div>
                 <RadioGroup 
                   value={exam.answers[currentQ.id]} 

@@ -13,17 +13,18 @@ import java.util.Map;
 
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.JoinColumn;
+import jakarta.persistence.FetchType;
 
 @Getter
 @Setter
 @Entity
 @Table(name = "questions")
 public class Question extends BaseEntity {
-    @ManyToOne
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "subject_id")
     private Subject subject;
 
-    @ManyToOne
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "context_id")
     private QuestionContext context;
 

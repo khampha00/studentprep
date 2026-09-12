@@ -4,6 +4,7 @@ import com.studentprep.exam.dto.ExamStartResponse;
 import com.studentprep.exam.dto.ExamSyncRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import jakarta.validation.Valid;
 import java.util.UUID;
 
 @RestController
@@ -29,7 +30,7 @@ public class ExamController {
     }
 
     @PostMapping("/{sessionId}/sync")
-    public ResponseEntity<Void> syncExam(@PathVariable UUID sessionId, @RequestBody ExamSyncRequest request) {
+    public ResponseEntity<Void> syncExam(@PathVariable UUID sessionId, @Valid @RequestBody ExamSyncRequest request) {
         examService.syncExam(sessionId, request);
         return ResponseEntity.ok().build();
     }
