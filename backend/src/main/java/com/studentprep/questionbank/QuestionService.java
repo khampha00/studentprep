@@ -9,7 +9,7 @@ import java.util.UUID;
 import java.util.ArrayList;
 
 @Service
-public class QuestionService {
+public class QuestionService implements QuestionInternalAPI {
 
     private final QuestionRepository repository;
     private final QuestionContextRepository contextRepository;
@@ -17,6 +17,12 @@ public class QuestionService {
     public QuestionService(QuestionRepository repository, QuestionContextRepository contextRepository) {
         this.repository = repository;
         this.contextRepository = contextRepository;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<Question> getActiveQuestions() {
+        return repository.findByStatusOrderByCreatedAtAsc("ACTIVE");
     }
 
     @Transactional(readOnly = true)
