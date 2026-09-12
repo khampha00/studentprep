@@ -52,13 +52,29 @@ export default function StudentsPage() {
     }
   };
 
+  const handleDownloadTemplate = () => {
+    const header = "Name,State,Exam Center,Subject 1,Subject 2,Subject 3,Subject 4\n";
+    const sample = "John Doe,Lagos,CBT Center 1,USE OF ENGLISH,MATHEMATICS,PHYSICS,CHEMISTRY\n";
+    const blob = new Blob([header + sample], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = "student_upload_template.csv";
+    a.click();
+    window.URL.revokeObjectURL(url);
+  };
+
   return (
-    <div className="p-8 font-sans">
-      <div className="flex justify-between items-center mb-8">
-        <h1 className="text-3xl font-bold text-slate-900">Students</h1>
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <h1 className="text-2xl font-bold text-slate-900">Students</h1>
         <button 
-          onClick={() => { setShowModal(true); setResult(null); setFile(null); }}
-          className="bg-[#008751] hover:bg-[#007040] text-white px-4 py-2 rounded font-medium"
+          onClick={() => {
+            setShowModal(true);
+            setResult(null);
+            setFile(null);
+          }}
+          className="bg-[#008751] hover:bg-[#007040] text-white px-4 py-2 rounded-lg font-medium shadow-sm transition-colors"
         >
           Bulk Register CSV
         </button>
@@ -99,7 +115,16 @@ export default function StudentsPage() {
       {showModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-slate-50 rounded-lg shadow-lg w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
-            <h2 className="text-xl font-bold text-slate-900 mb-4">Bulk Register CSV</h2>
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold text-slate-900">Bulk Register CSV</h2>
+              <button 
+                type="button"
+                onClick={handleDownloadTemplate}
+                className="text-sm font-medium text-[#008751] hover:text-[#007040] underline underline-offset-2"
+              >
+                Download Template
+              </button>
+            </div>
             
             <form onSubmit={handleUpload} className="space-y-4">
               <div>
