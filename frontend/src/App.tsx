@@ -165,7 +165,7 @@ function ExamDashboard() {
       <AlertDialog open={exam.showWarningModal}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle className="text-destructive font-bold text-xl">Warning: Exam Environment Left</AlertDialogTitle>
+            <AlertDialogTitle className="text-destructive font-bold text-xl">Warning: Unpermitted Action</AlertDialogTitle>
             <AlertDialogDescription className="text-base text-slate-800">
               You have clicked outside the exam window or switched tabs. This is a violation of exam rules.<br/><br/>
               <strong>Strikes: {exam.tabSwitchCount} / 3</strong><br/><br/>
