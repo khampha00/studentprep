@@ -36,15 +36,8 @@ public class ExamService {
 
     @Transactional
     public ExamStartResponse startExam(UUID userId) {
-        @SuppressWarnings("unchecked")
-        Map<String, Object> payload = (Map<String, Object>) redisTemplate.opsForValue().get(REDIS_EXAM_PAYLOAD_KEY);
+        com.studentprep.exam.dto.ExamPayloadResponse payload = getActivePayload();
         
-        if (payload == null) {
-            payload = new HashMap<>();
-            payload.put("questions", questionAPI.getActiveQuestions());
-            redisTemplate.opsForValue().set(REDIS_EXAM_PAYLOAD_KEY, payload);
-        }
-
         int shuffleSeed = ThreadLocalRandom.current().nextInt(1000, 9999);
 
         ExamSession session = new ExamSession();
@@ -54,7 +47,12 @@ public class ExamService {
         session.setShuffleSeed(shuffleSeed);
         session = sessionRepository.save(session);
 
-        return new ExamStartResponse(session.getId(), shuffleSeed, payload);
+        Map<String, Object> payloadMap = new HashMap<>();
+        payloadMap.put("questions", payload.getQuestions());
+        payloadMap.put("contexts", payload.getContexts());
+        payloadMap.put("durationMinutes", payload.getDurationMinutes());
+        
+        return new ExamStartResponse(session.getId(), shuffleSeed, payloadMap);
     }
 
     @Transactional
@@ -100,6 +98,18 @@ public class ExamService {
 
     @Transactional(readOnly = true)
     public com.studentprep.exam.dto.ExamPayloadResponse getActivePayload() {
+        @SuppressWarnings("unchecked")
+        com.studentprep.exam.dto.ExamPayloadResponse cached = (com.studentprep.exam.dto.ExamPayloadResponse) redisTemplate.opsForValue().get(REDIS_EXAM_PAYLOAD_KEY);
+        if (cached != null) {
+            return cached;
+        }
+
+        com.studentprep.exam.dto.ExamPayloadResponse generated = generateStrippedPayload();
+        redisTemplate.opsForValue().set(REDIS_EXAM_PAYLOAD_KEY, generated);
+        return generated;
+    }
+
+    private com.studentprep.exam.dto.ExamPayloadResponse generateStrippedPayload() {
         java.util.List<com.studentprep.questionbank.Question> questions = questionAPI.getActiveQuestions();
         
         java.util.List<Object> strippedQuestions = new java.util.ArrayList<>();

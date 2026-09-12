@@ -5,209 +5,97 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.UUID;
-import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/admin/questions")
 public class QuestionController {
 
-    private final QuestionRepository repository;
-    private final QuestionContextRepository contextRepository;
+    private final QuestionService questionService;
 
-    public QuestionController(QuestionRepository repository, QuestionContextRepository contextRepository) {
-        this.repository = repository;
-        this.contextRepository = contextRepository;
+    public QuestionController(QuestionService questionService) {
+        this.questionService = questionService;
     }
 
     @GetMapping
     public ResponseEntity<List<Question>> getQuestionsByStatus(
             @RequestParam(defaultValue = "DRAFT") String status,
             @RequestParam(required = false) UUID subjectId) {
-        if (subjectId != null) {
-            return ResponseEntity.ok(repository.findByStatusAndSubjectIdOrderByCreatedAtAsc(status, subjectId));
-        }
-        return ResponseEntity.ok(repository.findByStatusOrderByCreatedAtAsc(status));
+        return ResponseEntity.ok(questionService.getQuestions(status, subjectId));
     }
 
     @PutMapping("/{id}")
     public ResponseEntity<Question> updateQuestionStatus(@PathVariable UUID id, @RequestBody Question updateRequest) {
-        return repository.findById(id).map(q -> {
-            q.setStatus(updateRequest.getStatus());
-            q.setContent(updateRequest.getContent());
-            return ResponseEntity.ok(repository.save(q));
-        }).orElse(ResponseEntity.notFound().build());
+        try {
+            return ResponseEntity.ok(questionService.updateQuestionStatus(id, updateRequest));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
+        }
     }
 
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteQuestion(@PathVariable UUID id) {
-        return repository.findById(id).map(q -> {
-            QuestionContext ctx = q.getContext();
-            repository.delete(q);
-            if (ctx != null) {
-                long remaining = repository.countByContextId(ctx.getId());
-                if (remaining == 0) {
-                    contextRepository.delete(ctx);
-                }
-            }
-            return ResponseEntity.noContent().<Void>build();
-        }).orElse(ResponseEntity.notFound().build());
+        try {
+            questionService.deleteQuestion(id);
+            return ResponseEntity.noContent().build();
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
+        }
     }
 
     @DeleteMapping("/drafts/bulk")
     public ResponseEntity<Void> deleteDraftsBulk(@RequestParam UUID subjectId) {
-        // Find all draft questions first to see their contexts
-        List<Question> drafts = repository.findByStatusAndSubjectIdOrderByCreatedAtAsc("DRAFT", subjectId);
-        repository.deleteAll(drafts);
-        
-        // Clean up any orphaned contexts
-        for (Question q : drafts) {
-            if (q.getContext() != null) {
-                long remaining = repository.countByContextId(q.getContext().getId());
-                if (remaining == 0 && contextRepository.existsById(q.getContext().getId())) {
-                    contextRepository.delete(q.getContext());
-                }
-            }
-        }
+        questionService.deleteDraftsBulk(subjectId);
         return ResponseEntity.noContent().build();
     }
 
     @DeleteMapping("/active/bulk")
     public ResponseEntity<Void> deleteAllActive(@RequestParam UUID subjectId) {
-        List<Question> active = repository.findByStatusAndSubjectIdOrderByCreatedAtAsc("ACTIVE", subjectId);
-        repository.deleteAll(active);
-        
-        // Clean up any orphaned contexts
-        for (Question q : active) {
-            if (q.getContext() != null) {
-                long remaining = repository.countByContextId(q.getContext().getId());
-                if (remaining == 0 && contextRepository.existsById(q.getContext().getId())) {
-                    contextRepository.delete(q.getContext());
-                }
-            }
-        }
+        questionService.deleteAllActive(subjectId);
         return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/drafts/bulk-approve")
-    @org.springframework.transaction.annotation.Transactional
     public ResponseEntity<?> approveAllDrafts(@RequestParam UUID subjectId) {
-        List<Question> drafts = repository.findByStatusAndSubjectIdOrderByCreatedAtAsc("DRAFT", subjectId);
-        
-        List<String> missingAnswers = new java.util.ArrayList<>();
-        for (Question q : drafts) {
-            Map<String, Object> content = q.getContent();
-            boolean isMissing = false;
-            
-            if (content == null || !content.containsKey("correctOption")) {
-                isMissing = true;
-            } else {
-                Object opt = content.get("correctOption");
-                if (opt == null || String.valueOf(opt).trim().isEmpty()) {
-                    isMissing = true;
-                }
-            }
-            
-            if (isMissing) {
-                Object qNum = content != null ? content.get("questionNumber") : null;
-                missingAnswers.add(qNum != null ? String.valueOf(qNum) : "Unknown");
-            }
+        try {
+            questionService.approveAllDrafts(subjectId);
+            return ResponseEntity.ok().build();
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
         }
-        
-        if (!missingAnswers.isEmpty()) {
-            return ResponseEntity.badRequest().body("Cannot approve. The following questions are missing correct answers: " + String.join(", ", missingAnswers));
-        }
-        
-        for (Question q : drafts) {
-            q.setStatus("ACTIVE");
-            repository.save(q);
-        }
-        
-        return ResponseEntity.ok().build();
     }
 
     @PostMapping("/{id}/ungroup")
     public ResponseEntity<Void> ungroupQuestion(@PathVariable UUID id) {
-        return repository.findById(id).map(q -> {
-            QuestionContext ctx = q.getContext();
-            if (ctx != null) {
-                q.setContext(null);
-                repository.save(q);
-                
-                long remaining = repository.countByContextId(ctx.getId());
-                if (remaining == 0) {
-                    contextRepository.delete(ctx);
-                }
-            }
-            return ResponseEntity.ok().<Void>build();
-        }).orElse(ResponseEntity.notFound().build());
+        try {
+            questionService.ungroupQuestion(id);
+            return ResponseEntity.ok().build();
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
+        }
     }
 
     @PostMapping("/contexts/{contextId}/ungroup")
     public ResponseEntity<Void> ungroupContext(@PathVariable UUID contextId) {
-        // Only detach DRAFT questions so we don't break ACTIVE ones
-        List<Question> questions = repository.findByContextId(contextId);
-        boolean anyActive = false;
-        
-        for (Question q : questions) {
-            if ("DRAFT".equals(q.getStatus())) {
-                q.setContext(null);
-                repository.save(q);
-            } else {
-                anyActive = true;
-            }
-        }
-        
-        if (!anyActive) {
-            contextRepository.deleteById(contextId);
-        }
-        
+        questionService.ungroupContext(contextId);
         return ResponseEntity.ok().build();
     }
 
     @PostMapping("/{id}/link")
     public ResponseEntity<Question> linkQuestion(@PathVariable UUID id, @RequestBody ContextLinkRequest req) {
-        return repository.findById(id).map(q -> {
-            if (req.getContextId() != null) {
-                contextRepository.findById(req.getContextId()).ifPresent(q::setContext);
-            } else if (req.getNewPassage() != null && !req.getNewPassage().isBlank()) {
-                QuestionContext newCtx = new QuestionContext();
-                newCtx.setPassage(req.getNewPassage());
-                newCtx.setSubject(q.getSubject());
-                QuestionContext savedCtx = contextRepository.save(newCtx);
-                q.setContext(savedCtx);
-            }
-            return ResponseEntity.ok(repository.save(q));
-        }).orElse(ResponseEntity.notFound().build());
+        try {
+            return ResponseEntity.ok(questionService.linkQuestion(id, req));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
+        }
     }
 
     @PostMapping("/contexts/{contextId}/approve")
     public ResponseEntity<?> approveContextGroup(@PathVariable UUID contextId) {
-        List<Question> questions = repository.findByContextId(contextId);
-        for (Question q : questions) {
-            if ("DRAFT".equals(q.getStatus())) {
-                // Ensure correctOption exists before approving
-                Map<String, Object> content = q.getContent();
-                boolean isMissing = false;
-                if (content == null || !content.containsKey("correctOption")) {
-                    isMissing = true;
-                } else {
-                    Object opt = content.get("correctOption");
-                    if (opt == null || String.valueOf(opt).trim().isEmpty()) {
-                        isMissing = true;
-                    }
-                }
-                
-                if (isMissing) {
-                    return ResponseEntity.badRequest().body("Question missing correct option");
-                }
-            }
+        try {
+            questionService.approveContextGroup(contextId);
+            return ResponseEntity.ok().build();
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
         }
-        for (Question q : questions) {
-            if ("DRAFT".equals(q.getStatus())) {
-                q.setStatus("ACTIVE");
-                repository.save(q);
-            }
-        }
-        return ResponseEntity.ok().build();
     }
 }
