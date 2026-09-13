@@ -1,18 +1,21 @@
 package com.studentprep.analytics;
 
 import com.studentprep.common.ApiResponse;
+import com.studentprep.exam.ExamSessionRepository;
 import com.studentprep.student.StudentRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestParam;
-import com.studentprep.exam.ExamSessionRepository;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/admin/analytics")
@@ -33,7 +36,7 @@ public class AnalyticsController {
         
         double passRate = completedExams > 0 ? ((double) passedExams / completedExams) * 100.0 : 0.0;
         
-        return ResponseEntity.ok(ApiResponse.of(Map.<String, Object>of(
+        return ResponseEntity.ok(ApiResponse.of(Map.of(
                 "totalStudents", totalStudents,
                 "completedExams", completedExams,
                 "averageScore", averageScore != null ? averageScore : 0.0,
@@ -42,8 +45,8 @@ public class AnalyticsController {
     }
 
     @GetMapping("/results")
-    public ResponseEntity<ApiResponse<java.util.List<Map<String, Object>>>> getResults() {
-        java.util.List<Map<String, Object>> results = examResultRepository.findAllWithStudent().stream()
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getResults() {
+        List<Map<String, Object>> results = examResultRepository.findAllWithStudent().stream()
                 .map(r -> Map.<String, Object>of(
                         "id", r.getId(),
                         "studentName", r.getStudent().getName(),
@@ -51,7 +54,7 @@ public class AnalyticsController {
                         "maxScore", r.getMaxScore(),
                         "topicBreakdown", r.getTopicBreakdown(),
                         "gradedAt", r.getGradedAt() != null ? r.getGradedAt().toString() : ""
-                )).collect(java.util.stream.Collectors.toList());
+                )).collect(Collectors.toList());
         return ResponseEntity.ok(ApiResponse.of(results));
     }
 
@@ -65,7 +68,7 @@ public class AnalyticsController {
         
         double passRate = completedExams > 0 ? ((double) passedExams / completedExams) * 100.0 : 0.0;
         
-        return ResponseEntity.ok(ApiResponse.of(Map.<String, Object>of(
+        return ResponseEntity.ok(ApiResponse.of(Map.of(
                 "examId", examId,
                 "completedExams", completedExams,
                 "averageScore", averageScore != null ? averageScore : 0.0,
@@ -76,13 +79,13 @@ public class AnalyticsController {
     }
 
     @GetMapping("/leaderboard")
-    public ResponseEntity<ApiResponse<java.util.List<Map<String, Object>>>> getLeaderboard(@RequestParam(defaultValue = "10") int topN) {
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getLeaderboard(@RequestParam(defaultValue = "10") int topN) {
         return ResponseEntity.ok(ApiResponse.of(leaderboardService.getLeaderboard(topN)));
     }
 
     @GetMapping("/live-sessions")
-    public ResponseEntity<ApiResponse<java.util.List<Map<String, Object>>>> getLiveSessions() {
-        java.util.List<Map<String, Object>> sessions = examSessionRepository.findAllByStatus("IN_PROGRESS").stream().map(s -> {
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getLiveSessions() {
+        List<Map<String, Object>> sessions = examSessionRepository.findAllByStatus("IN_PROGRESS").stream().map(s -> {
             String studentName = studentRepository.findById(s.getUserId())
                     .map(student -> student.getName())
                     .orElse("Unknown Student");
@@ -99,19 +102,42 @@ public class AnalyticsController {
                     "timeLeft", timeLeft,
                     "status", s.getStatus()
             );
-        }).collect(java.util.stream.Collectors.toList());
+        }).collect(Collectors.toList());
         return ResponseEntity.ok(ApiResponse.of(sessions));
     }
 
     @GetMapping("/subjects")
-    public ResponseEntity<ApiResponse<java.util.List<Map<String, Object>>>> getSubjects() {
-        // Since there is no specific query for this, we will aggregate it or return a mock for the frontend
-        java.util.List<Map<String, Object>> subjects = java.util.List.of(
-            Map.of("subjectName", "Mathematics", "averageScore", 75.5),
-            Map.of("subjectName", "English Language", "averageScore", 68.2),
-            Map.of("subjectName", "Physics", "averageScore", 60.1),
-            Map.of("subjectName", "Chemistry", "averageScore", 72.8)
-        );
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getSubjects() {
+        List<ExamResult> allResults = examResultRepository.findAll();
+        Map<String, int[]> subjectAggregates = new HashMap<>();
+        
+        for (ExamResult result : allResults) {
+            if (result.getTopicBreakdown() != null) {
+                for (Map.Entry<String, TopicStats> entry : result.getTopicBreakdown().entrySet()) {
+                    int separatorIndex = entry.getKey().indexOf(" - ");
+                    String subjectName = separatorIndex > 0 ? entry.getKey().substring(0, separatorIndex) : entry.getKey();
+                    TopicStats stats = entry.getValue();
+                    
+                    subjectAggregates.putIfAbsent(subjectName, new int[]{0, 0});
+                    subjectAggregates.get(subjectName)[0] += stats.getCorrect();
+                    subjectAggregates.get(subjectName)[1] += stats.getTotal();
+                }
+            }
+        }
+        
+        List<Map<String, Object>> subjects = subjectAggregates.entrySet().stream()
+            .map(entry -> {
+                String subjectName = entry.getKey();
+                int correct = entry.getValue()[0];
+                int total = entry.getValue()[1];
+                double averageScore = total > 0 ? ((double) correct / total) * 100.0 : 0.0;
+                return Map.<String, Object>of(
+                    "subjectName", subjectName,
+                    "averageScore", averageScore
+                );
+            })
+            .collect(Collectors.toList());
+
         return ResponseEntity.ok(ApiResponse.of(subjects));
     }
 }

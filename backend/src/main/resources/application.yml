@@ -1,6 +1,9 @@
 spring:
   config:
     import: optional:file:../.env[.properties]
+  mvc:
+    problem-details:
+      enabled: true
   application:
     name: studentprep-backend
   datasource:

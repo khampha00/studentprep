@@ -26,7 +26,6 @@ public class ExamGraderListener {
     private final LeaderboardService leaderboardService;
 
     @ApplicationModuleListener
-    @net.javacrumbs.shedlock.spring.annotation.SchedulerLock(name = "gradeExam", lockAtLeastFor = "1m", lockAtMostFor = "5m")
     public void onExamSubmitted(ExamSubmittedEvent event) {
         System.out.println("Grading exam session: " + event.sessionId());
 

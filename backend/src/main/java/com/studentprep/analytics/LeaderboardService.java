@@ -20,7 +20,7 @@ public class LeaderboardService {
     }
 
     public void updateScore(String studentId, double score) {
-        redisTemplate.opsForZSet().add(LEADERBOARD_KEY, studentId, score);
+        redisTemplate.opsForZSet().incrementScore(LEADERBOARD_KEY, studentId, score);
     }
 
     public List<Map<String, Object>> getLeaderboard(int topN) {
