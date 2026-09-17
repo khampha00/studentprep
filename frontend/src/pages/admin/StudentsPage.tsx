@@ -81,6 +81,46 @@ export default function StudentsPage() {
     window.URL.revokeObjectURL(url);
   };
 
+  const handleExportCredentials = async () => {
+    try {
+      const response = await axios.get('/api/v1/admin/students/export', {
+        responseType: 'blob'
+      });
+      const url = window.URL.createObjectURL(new Blob([response.data], { type: 'text/csv' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'student_credentials.csv');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('Credentials exported successfully');
+    } catch (error) {
+      toast.error('Failed to export credentials');
+      console.error(error);
+    }
+  };
+
+  const handleDownloadSlip = async (studentId: string, regNumber: string) => {
+    try {
+      const response = await axios.get(`/api/v1/admin/students/${studentId}/slip`, {
+        responseType: 'blob'
+      });
+      const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `${regNumber}-slip.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('Registration slip downloaded successfully');
+    } catch (error) {
+      toast.error('Failed to download slip');
+      console.error(error);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
@@ -90,15 +130,14 @@ export default function StudentsPage() {
         </div>
         <div className="flex items-center gap-2.5">
           {students.length > 0 && (
-            <a 
-              href="/api/v1/admin/students/export"
-              download="student_credentials.csv"
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 rounded-lg text-sm font-medium shadow-sm transition-colors"
+            <button 
+              onClick={handleExportCredentials}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 rounded-lg text-sm font-medium shadow-sm transition-colors cursor-pointer"
               title="Download all candidate Registration Numbers & PINs in CSV"
             >
               <Download className="w-4 h-4 text-slate-600" />
               Download All Credentials (CSV)
-            </a>
+            </button>
           )}
           <button 
             onClick={() => {
@@ -106,7 +145,7 @@ export default function StudentsPage() {
               setResult(null);
               setFile(null);
             }}
-            className="inline-flex items-center gap-1.5 bg-[#008751] hover:bg-[#007040] text-white px-4 py-2 rounded-lg font-medium shadow-sm transition-colors text-sm"
+            className="inline-flex items-center gap-1.5 bg-[#008751] hover:bg-[#007040] text-white px-4 py-2 rounded-lg font-medium shadow-sm transition-colors text-sm cursor-pointer"
           >
             Bulk Register CSV
           </button>
@@ -144,17 +183,14 @@ export default function StudentsPage() {
                   <td className="p-4 text-slate-700 text-sm">{student.state}</td>
                   <td className="p-4 text-slate-700 text-sm">{student.examCenter || 'N/A'}</td>
                   <td className="p-4 text-right">
-                    <a
-                      href={`/api/v1/admin/students/${student.id}/slip`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      download={`${student.registrationNumber}-slip.pdf`}
-                      className="inline-flex items-center gap-1.5 px-3 py-1 bg-white border border-[#008751]/40 text-[#008751] hover:bg-emerald-50 rounded-md text-xs font-semibold shadow-xs transition-colors"
+                    <button
+                      onClick={() => handleDownloadSlip(student.id, student.registrationNumber)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1 bg-white border border-[#008751]/40 text-[#008751] hover:bg-emerald-50 rounded-md text-xs font-semibold shadow-xs transition-colors cursor-pointer"
                       title="Download printable exam slip PDF"
                     >
                       <FileText className="w-3.5 h-3.5" />
                       Download Slip (PDF)
-                    </a>
+                    </button>
                   </td>
                 </tr>
               ))}
