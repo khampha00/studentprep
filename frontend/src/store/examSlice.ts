@@ -53,9 +53,13 @@ export const initializeExam = createAsyncThunk(
                isSynced: true
            } as LocalExamState;
         }
-    } catch (e) {
+    } catch (e: any) {
         if (localState) return localState;
-        throw new Error("Cannot start exam while offline with no local cache.");
+        if (!navigator.onLine) {
+            throw new Error("Cannot start exam while offline with no local cache.");
+        }
+        const msg = e?.response?.data?.message || e?.response?.data?.detail || e?.message || "Failed to start exam. Please try again.";
+        throw new Error(msg);
     }
   }
 );
