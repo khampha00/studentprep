@@ -23,11 +23,57 @@ public class StudentService {
     private final StudentRepository studentRepository;
     private final SubjectRepository subjectRepository;
     private final PasswordEncoder passwordEncoder;
+    private final UserRepository userRepository;
 
-    public StudentService(StudentRepository studentRepository, SubjectRepository subjectRepository, PasswordEncoder passwordEncoder) {
+    public StudentService(StudentRepository studentRepository, SubjectRepository subjectRepository, PasswordEncoder passwordEncoder, UserRepository userRepository) {
         this.studentRepository = studentRepository;
         this.subjectRepository = subjectRepository;
         this.passwordEncoder = passwordEncoder;
+        this.userRepository = userRepository;
+    }
+
+    private Subject findOrCreateSubject(String name) {
+        String cleanName = name.trim();
+        if (cleanName.isEmpty()) return null;
+
+        // 1. Direct match
+        Optional<Subject> exact = subjectRepository.findByName(cleanName);
+        if (exact.isPresent()) {
+            return exact.get();
+        }
+
+        List<Subject> allSubjects = subjectRepository.findAll();
+
+        // 2. Case-insensitive match
+        for (Subject s : allSubjects) {
+            if (s.getName().equalsIgnoreCase(cleanName)) {
+                return s;
+            }
+        }
+
+        // 3. Normalized alias matching (English Language / Use of English, Mathematics / Maths)
+        String normalized = cleanName.toUpperCase().replaceAll("[_\\- ]+", " ").trim();
+        if (normalized.equals("ENGLISH") || normalized.equals("USE OF ENGLISH") || normalized.equals("ENGLISH LANGUAGE")) {
+            for (Subject s : allSubjects) {
+                String sNorm = s.getName().toUpperCase().replaceAll("[_\\- ]+", " ").trim();
+                if (sNorm.equals("ENGLISH") || sNorm.equals("USE OF ENGLISH") || sNorm.equals("ENGLISH LANGUAGE")) {
+                    return s;
+                }
+            }
+        }
+        if (normalized.equals("MATH") || normalized.equals("MATHS") || normalized.equals("MATHEMATICS")) {
+            for (Subject s : allSubjects) {
+                String sNorm = s.getName().toUpperCase().replaceAll("[_\\- ]+", " ").trim();
+                if (sNorm.equals("MATH") || sNorm.equals("MATHS") || sNorm.equals("MATHEMATICS")) {
+                    return s;
+                }
+            }
+        }
+
+        // 4. Auto-provision new subject in standard uppercase format
+        Subject newSubject = new Subject();
+        newSubject.setName(cleanName.toUpperCase());
+        return subjectRepository.save(newSubject);
     }
 
     @Transactional
@@ -63,12 +109,15 @@ public class StudentService {
                     for (int i = 3; i < 7; i++) {
                         String subjectName = parts[i].trim();
                         if (subjectName.isEmpty()) continue;
-                        Subject subject = subjectRepository.findByName(subjectName)
-                                .orElseThrow(() -> new IllegalArgumentException("Subject not found: " + subjectName));
-                        subjects.add(subject);
+                        Subject subject = findOrCreateSubject(subjectName);
+                        if (subject != null) {
+                            subjects.add(subject);
+                        }
                     }
 
+                    UUID studentId = UUID.randomUUID();
                     Student student = new Student();
+                    student.setId(studentId);
                     student.setName(name);
                     student.setState(state);
                     student.setExamCenter(center);
@@ -81,8 +130,16 @@ public class StudentService {
                     } while (studentRepository.existsByRegistrationNumber(regNum));
 
                     student.setRegistrationNumber(regNum);
-
                     studentRepository.save(student);
+
+                    // Sync student credential to users table for login and exam_sessions foreign key
+                    User user = new User();
+                    user.setId(studentId);
+                    user.setIdentifier(regNum);
+                    user.setPinHash(defaultPinHash);
+                    user.setRole("ROLE_STUDENT");
+                    userRepository.save(user);
+
                     created++;
                 } catch (Exception e) {
                     errors.add("Error processing line '" + line + "': " + e.getMessage());

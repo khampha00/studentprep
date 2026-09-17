@@ -54,7 +54,7 @@ export default function StudentsPage() {
 
   const handleDownloadTemplate = () => {
     const header = "Name,State,Exam Center,Subject 1,Subject 2,Subject 3,Subject 4\n";
-    const sample = "John Doe,Lagos,CBT Center 1,USE OF ENGLISH,MATHEMATICS,PHYSICS,CHEMISTRY\n";
+    const sample = "John Doe,Lagos,CBT Center 1,English,Mathematics,Physics,Chemistry\n";
     const blob = new Blob([header + sample], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -137,6 +137,9 @@ export default function StudentsPage() {
                   onChange={(e) => setFile(e.target.files?.[0] || null)}
                   className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200"
                 />
+                <p className="mt-1.5 text-xs text-slate-500">
+                  Tip: Subject names are case-insensitive (e.g. English, Mathematics, Physics, Chemistry). Any new subjects will automatically be registered.
+                </p>
               </div>
               <div className="flex gap-2 justify-end mt-6">
                 <button 
