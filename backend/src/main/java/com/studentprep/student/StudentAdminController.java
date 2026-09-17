@@ -42,6 +42,15 @@ public class StudentAdminController {
         return ResponseEntity.ok().headers(headers).body(pdfBytes);
     }
 
+    @GetMapping(value = "/export", produces = "text/csv")
+    public ResponseEntity<byte[]> exportStudentsCsv() {
+        byte[] csvBytes = studentService.exportStudentsCsv();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.parseMediaType("text/csv"));
+        headers.setContentDispositionFormData("attachment", "student_credentials.csv");
+        return ResponseEntity.ok().headers(headers).body(csvBytes);
+    }
+
     @GetMapping
     public ResponseEntity<PagedResponse<List<Map<String, Object>>>> getAllStudents(
             @RequestParam(defaultValue = "0") int page,
@@ -52,6 +61,7 @@ public class StudentAdminController {
                         "id", s.getId(),
                         "name", s.getName(),
                         "registrationNumber", s.getRegistrationNumber(),
+                        "pin", "12345",
                         "state", s.getState(),
                         "examCenter", s.getExamCenter() != null ? s.getExamCenter() : ""
                 )).collect(Collectors.toList());

@@ -173,6 +173,7 @@ public class StudentService {
         Map<String, Object> details = new HashMap<>();
         details.put("name", student.getName());
         details.put("registrationNumber", student.getRegistrationNumber());
+        details.put("pin", "12345");
         details.put("examCenter", student.getExamCenter());
         details.put("state", student.getState());
         details.put("subjects", student.getSubjects().stream().map(Subject::getName).toList());
@@ -189,22 +190,42 @@ public class StudentService {
             PdfWriter.getInstance(document, baos);
             document.open();
             
-            document.add(new Paragraph("JAMB Registration Slip"));
-            document.add(new Paragraph("--------------------------------------------------"));
-            document.add(new Paragraph("Student Name: " + student.getName()));
+            document.add(new Paragraph("JAMB CBT Registration & Examination Slip"));
+            document.add(new Paragraph("=================================================="));
+            document.add(new Paragraph("Candidate Name: " + student.getName()));
             document.add(new Paragraph("Registration Number: " + student.getRegistrationNumber()));
+            document.add(new Paragraph("Login PIN: 12345"));
             document.add(new Paragraph("State: " + student.getState()));
-            document.add(new Paragraph("Exam Center: " + student.getExamCenter()));
+            document.add(new Paragraph("Exam Center: " + (student.getExamCenter() != null ? student.getExamCenter() : "Main Center")));
             
             String subjects = student.getSubjects().stream()
                 .map(Subject::getName)
                 .collect(Collectors.joining(", "));
-            document.add(new Paragraph("Enrolled Subjects: " + subjects));
+            document.add(new Paragraph("Registered Subjects: " + (subjects.isEmpty() ? "None" : subjects)));
+            document.add(new Paragraph("=================================================="));
+            document.add(new Paragraph("Important: Use your Registration Number and Login PIN to log in on exam day."));
             
             document.close();
             return baos.toByteArray();
         } catch (Exception e) {
             throw new RuntimeException("Failed to generate PDF slip", e);
         }
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] exportStudentsCsv() {
+        List<Student> allStudents = studentRepository.findAll();
+        StringBuilder sb = new StringBuilder();
+        sb.append("Name,Registration Number,Login PIN,State,Exam Center,Registered Subjects\n");
+        for (Student s : allStudents) {
+            String subjects = s.getSubjects().stream().map(Subject::getName).collect(Collectors.joining("; "));
+            sb.append("\"").append(s.getName() != null ? s.getName().replace("\"", "\"\"") : "").append("\",")
+              .append("\"").append(s.getRegistrationNumber()).append("\",")
+              .append("\"12345\",")
+              .append("\"").append(s.getState() != null ? s.getState().replace("\"", "\"\"") : "").append("\",")
+              .append("\"").append(s.getExamCenter() != null ? s.getExamCenter().replace("\"", "\"\"") : "").append("\",")
+              .append("\"").append(subjects.replace("\"", "\"\"")).append("\"\n");
+        }
+        return sb.toString().getBytes(StandardCharsets.UTF_8);
     }
 }
