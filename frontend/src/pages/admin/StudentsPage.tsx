@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 export default function StudentsPage() {
   const [students, setStudents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [availableSubjects, setAvailableSubjects] = useState<string[]>([]);
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [result, setResult] = useState<any>(null);
@@ -24,8 +25,18 @@ export default function StudentsPage() {
       });
   };
 
+  const fetchSubjects = () => {
+    axios.get('/api/v1/subjects')
+      .then(res => {
+        const subjs = res.data?.data?.map((s: any) => s.name) || [];
+        setAvailableSubjects(subjs);
+      })
+      .catch(() => {});
+  };
+
   useEffect(() => {
     fetchStudents();
+    fetchSubjects();
   }, []);
 
   const handleUpload = async (e: React.FormEvent) => {
@@ -44,6 +55,7 @@ export default function StudentsPage() {
       toast.success('Upload completed');
       setFile(null);
       fetchStudents();
+      fetchSubjects();
     } catch (error) {
       toast.error('Failed to upload file');
       console.error(error);
@@ -54,7 +66,11 @@ export default function StudentsPage() {
 
   const handleDownloadTemplate = () => {
     const header = "Name,State,Exam Center,Subject 1,Subject 2,Subject 3,Subject 4\n";
-    const sample = "John Doe,Lagos,CBT Center 1,English,Mathematics,Physics,Chemistry\n";
+    // Pick 4 real subjects from the database if available, otherwise sensible defaults
+    const subjectsToUse = availableSubjects.length >= 4
+      ? availableSubjects.slice(0, 4)
+      : [...availableSubjects, 'Mathematics', 'English', 'Biology', 'Chemistry'].slice(0, 4);
+    const sample = `John Doe,Lagos,CBT Center 1,${subjectsToUse.join(',')}\n`;
     const blob = new Blob([header + sample], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -138,8 +154,23 @@ export default function StudentsPage() {
                   className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200"
                 />
                 <p className="mt-1.5 text-xs text-slate-500">
-                  Tip: Subject names are case-insensitive (e.g. English, Mathematics, Physics, Chemistry). Any new subjects will automatically be registered.
+                  Tip: Subject names are matched against your subjects table (case-insensitive). Any new subjects in the CSV will also be created automatically.
                 </p>
+
+                {availableSubjects.length > 0 && (
+                  <div className="mt-3 p-3 bg-slate-100 rounded-md border border-slate-200 text-xs">
+                    <span className="font-semibold text-slate-700 block mb-1.5">
+                      Your Created Subjects ({availableSubjects.length}):
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {availableSubjects.map((s, idx) => (
+                        <span key={idx} className="px-2 py-0.5 bg-white border border-slate-300 rounded text-slate-800 font-medium">
+                          {s}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="flex gap-2 justify-end mt-6">
                 <button 
