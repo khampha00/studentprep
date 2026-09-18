@@ -66,8 +66,8 @@ public class AuthController {
 
         org.springframework.http.ResponseCookie cookie = org.springframework.http.ResponseCookie.from("refreshToken", refreshToken)
                 .httpOnly(true)
-                .secure(true)
-                .sameSite("Strict")
+                .secure(false)
+                .sameSite("Lax")
                 .path("/api/v1/auth/refresh")
                 .maxAge(7 * 24 * 60 * 60)
                 .build();
