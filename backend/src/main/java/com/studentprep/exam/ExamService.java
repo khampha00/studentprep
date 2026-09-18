@@ -50,6 +50,29 @@ public class ExamService {
 
     @Transactional
     public ExamStartResponse startExam(UUID userId) {
+        // Block students who were previously flagged for malpractice
+        if (sessionRepository.existsByUserIdAndStatus(userId, "FLAGGED_TAB_SWITCH")) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.FORBIDDEN,
+                    "Your account has been blocked due to exam malpractice. You cannot start an exam."
+            );
+        }
+
+        // Bug fix: Check for existing IN_PROGRESS session to prevent duplicate key violation
+        // on idx_unique_active_session partial unique index
+        java.util.Optional<ExamSession> existingSession = sessionRepository.findByUserIdAndStatus(userId, "IN_PROGRESS");
+        if (existingSession.isPresent()) {
+            ExamSession existing = existingSession.get();
+            // Close the stale session (e.g. from a tab-switch violation that didn't clean up)
+            existing.setStatus("SUBMITTED");
+            existing.setEndTime(Instant.now());
+            if (existing.getStatePayload() == null) {
+                existing.setStatePayload(new HashMap<>());
+            }
+            existing.getStatePayload().put("autoClosedReason", "NEW_SESSION_REQUESTED");
+            sessionRepository.saveAndFlush(existing);
+        }
+
         ExamPayloadResponse payload = getActivePayload(userId);
         
         int shuffleSeed = ThreadLocalRandom.current().nextInt(1000, 9999);
@@ -69,20 +92,34 @@ public class ExamService {
         return new ExamStartResponse(session.getId(), shuffleSeed, payloadMap);
     }
 
+    private ExamSession resolveSession(UUID sessionId, UUID studentId) {
+        if (sessionId != null) {
+            java.util.Optional<ExamSession> sessionOpt = sessionRepository.findById(sessionId);
+            if (sessionOpt.isPresent()) {
+                ExamSession s = sessionOpt.get();
+                if (!s.getUserId().equals(studentId)) {
+                    throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN, "Access Denied");
+                }
+                return s;
+            }
+        }
+        // Fallback: look up active session for this student
+        return sessionRepository.findByUserIdAndStatus(studentId, "IN_PROGRESS")
+                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND, "No active exam session found"));
+    }
+
     @Transactional
     public void syncExam(UUID sessionId, UUID studentId, ExamSyncRequest request) {
-        ExamSession session = sessionRepository.findById(sessionId).orElseThrow();
-        if (!session.getUserId().equals(studentId)) {
-            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN, "Access Denied");
-        }
-        if ("SUBMITTED".equals(session.getStatus())) {
-            throw new IllegalStateException("Cannot sync a submitted exam.");
+        ExamSession session = resolveSession(sessionId, studentId);
+        if ("SUBMITTED".equals(session.getStatus()) || "FLAGGED_TAB_SWITCH".equals(session.getStatus())) {
+            return; // Silently accept — session was already finalized
         }
         session.setStatePayload(request.statePayload());
         
         if (Boolean.TRUE.equals(request.statePayload().get("isFinal"))) {
-            session.setStatus("SUBMITTED");
-            session.setEndTime(Instant.now());
+            String reason = (String) request.statePayload().getOrDefault("reason", "NORMAL");
+            finalizeExamSession(session, reason);
+            return;
         }
         
         sessionRepository.save(session);
@@ -90,27 +127,42 @@ public class ExamService {
 
     @Transactional
     public void submitExam(UUID sessionId, UUID studentId) {
-        ExamSession session = sessionRepository.findById(sessionId).orElseThrow();
-        if (!session.getUserId().equals(studentId)) {
-            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN, "Access Denied");
+        submitExam(sessionId, studentId, "NORMAL");
+    }
+
+    @Transactional
+    public void submitExam(UUID sessionId, UUID studentId, String reasonParam) {
+        ExamSession session = resolveSession(sessionId, studentId);
+        if ("SUBMITTED".equals(session.getStatus()) || "FLAGGED_TAB_SWITCH".equals(session.getStatus())) {
+            return; // Already finalized — idempotent
+        }
+
+        String reason = reasonParam;
+        if (reason == null || "NORMAL".equals(reason)) {
+            reason = session.getStatePayload() != null ? (String) session.getStatePayload().getOrDefault("reason", "NORMAL") : "NORMAL";
         }
         
-        if ("SUBMITTED".equals(session.getStatus())) {
-            throw new IllegalStateException("Exam is already submitted.");
+        finalizeExamSession(session, reason);
+    }
+
+    private void finalizeExamSession(ExamSession session, String reason) {
+        if ("SUBMITTED".equals(session.getStatus()) || "FLAGGED_TAB_SWITCH".equals(session.getStatus())) {
+            return;
         }
 
         Instant expectedEndTime = session.getStartTime().plus(EXAM_DURATION_MINUTES, ChronoUnit.MINUTES);
         Instant now = Instant.now();
         
-        // FSD 4.2: Validate against Server Time (10-second grace period)
-        if (now.isAfter(expectedEndTime.plus(LATE_SUBMISSION_GRACE_SECONDS, ChronoUnit.SECONDS))) {
+        if ("FLAGGED_TAB_SWITCH".equals(reason)) {
+            session.setStatus("FLAGGED_TAB_SWITCH");
+        } else if (now.isAfter(expectedEndTime.plus(LATE_SUBMISSION_GRACE_SECONDS, ChronoUnit.SECONDS))) {
             session.setStatus("LATE_SUBMISSION_FLAGGED");
         } else {
             session.setStatus("SUBMITTED");
         }
         
         session.setEndTime(now);
-        sessionRepository.save(session);
+        sessionRepository.saveAndFlush(session);
 
         // Transactional Outbox Pattern
         eventPublisher.publishEvent(new ExamSubmittedEvent(session.getId(), session.getUserId(), session.getStatePayload()));

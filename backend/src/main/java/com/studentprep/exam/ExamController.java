@@ -41,14 +41,18 @@ public class ExamController {
     }
 
     @PostMapping("/active/sync")
-    public ResponseEntity<ApiResponse<Map<String, String>>> syncExam(@RequestParam UUID sessionId, @Valid @RequestBody ExamSyncRequest request) {
+    public ResponseEntity<ApiResponse<Map<String, String>>> syncExam(
+            @RequestParam(required = false) UUID sessionId,
+            @Valid @RequestBody ExamSyncRequest request) {
         examService.syncExam(sessionId, getCurrentStudentId(), request);
         return ResponseEntity.ok(ApiResponse.of(Map.of("status", "SYNCED", "serverTime", Instant.now().toString())));
     }
 
     @PostMapping("/active/submit")
-    public ResponseEntity<ApiResponse<Map<String, String>>> submitExam(@RequestParam UUID sessionId) {
-        examService.submitExam(sessionId, getCurrentStudentId());
+    public ResponseEntity<ApiResponse<Map<String, String>>> submitExam(
+            @RequestParam(required = false) UUID sessionId,
+            @RequestParam(required = false, defaultValue = "NORMAL") String reason) {
+        examService.submitExam(sessionId, getCurrentStudentId(), reason);
         return ResponseEntity.ok(ApiResponse.of(Map.of("status", "SUBMITTED", "serverTime", Instant.now().toString())));
     }
 

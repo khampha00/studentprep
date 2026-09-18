@@ -35,30 +35,34 @@ const initialState: ExamState = {
 
 export const initializeExam = createAsyncThunk(
   'exam/initialize',
-  async ({ sessionId }: { sessionId: string }) => {
-    const localState = await db.examStates.get(sessionId);
+  async () => {
+    let localState: LocalExamState | undefined;
     try {
         const response = await axios.post(`/api/v1/exams/start`);
         const serverSeed = response.data.data.shuffleSeed;
+        const realSessionId = response.data.data.sessionId;
+        localState = await db.examStates.get(realSessionId);
         
         if (localState && localState.lastUpdated > 0) {
            return localState; // Offline-first / Rehydration
         } else {
-           return {
-               id: sessionId,
+           const newState: LocalExamState = {
+               id: realSessionId,
                shuffleSeed: serverSeed,
                answers: {},
                lastUpdated: Date.now(),
                timeLeft: 7200,
                isSynced: true
-           } as LocalExamState;
+           };
+           await db.examStates.put(newState);
+           return newState;
         }
     } catch (e: any) {
         if (localState) return localState;
         if (!navigator.onLine) {
             throw new Error("Cannot start exam while offline with no local cache.");
         }
-        const msg = e?.response?.data?.message || e?.response?.data?.detail || e?.message || "Failed to start exam. Please try again.";
+        const msg = e?.response?.data?.detail || e?.response?.data?.message || e?.message || "Failed to start exam. Please try again.";
         throw new Error(msg);
     }
   }
@@ -69,13 +73,12 @@ export const syncExamData = createAsyncThunk(
     async (payload: { isFinal?: boolean, reason?: string } | undefined, { getState }) => {
         interface RootStateType { exam: ExamState; }
         const state = (getState() as RootStateType).exam;
-        if (!state.sessionId) return false;
         
         const isFinalSync = payload?.isFinal || state.isExamTerminated;
         const reason = payload?.reason || (state.isExamTerminated ? 'FLAGGED_TAB_SWITCH' : 'NORMAL');
         
         try {
-            if (isFinalSync) {
+            if (isFinalSync && state.sessionId) {
                 await db.examStates.update(state.sessionId, { 
                     isFinal: true, 
                     terminationReason: reason,
@@ -83,7 +86,8 @@ export const syncExamData = createAsyncThunk(
                 });
             }
 
-            await axios.post(`/api/v1/exams/active/sync?sessionId=` + state.sessionId, {
+            const sessionParam = state.sessionId ? `?sessionId=${state.sessionId}` : '';
+            await axios.post(`/api/v1/exams/active/sync${sessionParam}`, {
                 statePayload: {
                     answers: state.answers,
                     timeLeft: state.timeLeft,
@@ -92,9 +96,14 @@ export const syncExamData = createAsyncThunk(
                     reason: reason
                 }
             });
-            await db.examStates.update(state.sessionId, { isSynced: true });
+            if (state.sessionId) {
+                await db.examStates.update(state.sessionId, { isSynced: true });
+            }
             if (isFinalSync) {
-                await axios.post(`/api/v1/exams/active/submit?sessionId=` + state.sessionId);
+                const submitParam = state.sessionId 
+                    ? `?sessionId=${state.sessionId}&reason=${encodeURIComponent(reason)}` 
+                    : `?reason=${encodeURIComponent(reason)}`;
+                await axios.post(`/api/v1/exams/active/submit${submitParam}`);
             }
             return true;
         } catch (e) {

@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Button } from '../../components/ui/button';
 import { Label } from '../../components/ui/label';
@@ -13,11 +13,21 @@ export default function Login() {
   const [identifier, setIdentifier] = useState('');
   const [pin, setPin] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [blockedError, setBlockedError] = useState<string | null>(null);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const wasTerminated = searchParams.get('terminated') === 'malpractice';
+
+  useEffect(() => {
+    if (wasTerminated) {
+      toast.error('Your exam was terminated due to malpractice (Tab Switching). Contact your supervisor for further instructions.');
+    }
+  }, [wasTerminated]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+    setBlockedError(null);
     
     try {
       const res = await axios.post('/api/v1/auth/login', { identifier, pin });
@@ -33,7 +43,11 @@ export default function Login() {
          navigate('/dashboard');
       }
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Login failed. Please check your credentials.');
+      const errorMsg = e.response?.data?.detail || e.response?.data?.message || 'Login failed. Please check your credentials.';
+      if (e.response?.status === 403) {
+        setBlockedError(errorMsg);
+      }
+      toast.error(errorMsg);
     } finally {
       setIsLoading(false);
     }
@@ -42,6 +56,15 @@ export default function Login() {
   return (
     <div className="flex items-center justify-center min-h-screen p-4 bg-slate-50">
       <div className="w-full max-w-md bg-white rounded-xl shadow-sm border border-slate-200 p-8">
+        {(wasTerminated || blockedError) && (
+          <div className="mb-6 p-4 bg-red-50 border-2 border-red-500 rounded-lg text-sm text-red-900 font-semibold">
+            {blockedError ? (
+              <div>🚫 <strong>{blockedError}</strong></div>
+            ) : (
+              <div>⚠️ Your previous exam was <strong>terminated and flagged</strong> due to exam rule violations (Tab Switching). This incident has been reported for administrative review.</div>
+            )}
+          </div>
+        )}
         <h1 className="text-2xl font-bold text-slate-900 mb-6 text-center">StudentPrep Portal</h1>
         <form className="space-y-4" onSubmit={handleSubmit}>
           <div className="flex flex-col gap-1">

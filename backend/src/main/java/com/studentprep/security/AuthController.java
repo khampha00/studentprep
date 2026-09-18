@@ -20,11 +20,17 @@ public class AuthController {
     private final AuthenticationManager authenticationManager;
     private final JwtUtil jwtUtil;
     private final StringRedisTemplate redisTemplate;
+    private final com.studentprep.student.StudentRepository studentRepository;
+    private final com.studentprep.exam.ExamSessionRepository examSessionRepository;
 
-    public AuthController(AuthenticationManager authenticationManager, JwtUtil jwtUtil, StringRedisTemplate redisTemplate) {
+    public AuthController(AuthenticationManager authenticationManager, JwtUtil jwtUtil, StringRedisTemplate redisTemplate,
+                          com.studentprep.student.StudentRepository studentRepository,
+                          com.studentprep.exam.ExamSessionRepository examSessionRepository) {
         this.authenticationManager = authenticationManager;
         this.jwtUtil = jwtUtil;
         this.redisTemplate = redisTemplate;
+        this.studentRepository = studentRepository;
+        this.examSessionRepository = examSessionRepository;
     }
 
     @PostMapping("/login")
@@ -32,6 +38,18 @@ public class AuthController {
         Authentication authentication = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(request.identifier(), request.pin())
         );
+
+        java.util.Optional<com.studentprep.student.Student> studentOpt = studentRepository.findByRegistrationNumber(request.identifier());
+        if (studentOpt.isPresent()) {
+            com.studentprep.student.Student student = studentOpt.get();
+            if (examSessionRepository.existsByUserIdAndStatus(student.getId(), "FLAGGED_TAB_SWITCH")) {
+                throw new org.springframework.web.server.ResponseStatusException(
+                        org.springframework.http.HttpStatus.FORBIDDEN,
+                        "Your account has been blocked due to exam malpractice. You cannot log in."
+                );
+            }
+        }
+
         String role = authentication.getAuthorities().stream()
                 .map(GrantedAuthority::getAuthority)
                 .findFirst()
@@ -62,6 +80,15 @@ public class AuthController {
             return ResponseEntity.status(401).build();
         }
         String identifier = jwtUtil.extractIdentifier(refreshToken);
+        
+        java.util.Optional<com.studentprep.student.Student> studentOpt = studentRepository.findByRegistrationNumber(identifier);
+        if (studentOpt.isPresent()) {
+            com.studentprep.student.Student student = studentOpt.get();
+            if (examSessionRepository.existsByUserIdAndStatus(student.getId(), "FLAGGED_TAB_SWITCH")) {
+                return ResponseEntity.status(403).build();
+            }
+        }
+
         String role = jwtUtil.extractRole(refreshToken);
         String jti = jwtUtil.extractJti(refreshToken);
         

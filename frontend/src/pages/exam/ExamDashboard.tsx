@@ -47,7 +47,22 @@ export default function ExamDashboard() {
 
   useEffect(() => {
     if (exam.isExamTerminated) {
-       dispatch(syncExamData({ isFinal: true, reason: 'FLAGGED_TAB_SWITCH' }));
+      // Auto-submit the exam to the server with FLAGGED_TAB_SWITCH reason
+      dispatch(syncExamData({ isFinal: true, reason: 'FLAGGED_TAB_SWITCH' }))
+        .then(() => {
+          // After submission, wait 3 seconds to let the student read the message, then force logout
+          setTimeout(() => {
+            localStorage.removeItem('token');
+            window.location.href = '/?terminated=malpractice';
+          }, 3000);
+        })
+        .catch(() => {
+          // Even if sync fails, still logout after delay
+          setTimeout(() => {
+            localStorage.removeItem('token');
+            window.location.href = '/?terminated=malpractice';
+          }, 3000);
+        });
     }
   }, [exam.isExamTerminated, dispatch]);
 
@@ -105,7 +120,8 @@ export default function ExamDashboard() {
             <AlertDialogTitle className="text-destructive font-bold text-xl uppercase">Exam Terminated</AlertDialogTitle>
             <AlertDialogDescription className="text-base text-slate-800 font-semibold">
               Your exam has been forcefully submitted due to multiple rule violations (Tab Switching).<br/><br/>
-              This attempt has been flagged for administrative review.
+              This attempt has been flagged for administrative review.<br/><br/>
+              <span className="text-destructive font-bold">You will be logged out in 3 seconds...</span>
             </AlertDialogDescription>
           </AlertDialogHeader>
         </AlertDialogContent>

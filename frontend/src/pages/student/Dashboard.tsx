@@ -16,7 +16,7 @@ export default function Dashboard() {
   const handleStartExam = async () => {
     setIsLoading(true);
     try {
-      await dispatch(initializeExam({ sessionId: '00000000-0000-0000-0000-000000000000' })).unwrap();
+      await dispatch(initializeExam()).unwrap();
       await dispatch(fetchExamPayload()).unwrap();
       navigate('/exam');
     } catch (e: any) {
