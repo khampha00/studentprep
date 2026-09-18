@@ -40,18 +40,35 @@ export const initializeExam = createAsyncThunk(
     try {
         const response = await axios.post(`/api/v1/exams/start`);
         const serverSeed = response.data.data.shuffleSeed;
-        const realSessionId = response.data.data.sessionId;
+        const realSessionId = response.data.data.sessionId || 'default-session-id';
+        const serverStatePayload = response.data.data.statePayload || response.data.data.payload;
+        const isResumed = response.data.data.resumed || false;
+
         localState = await db.examStates.get(realSessionId);
         
         if (localState && localState.lastUpdated > 0) {
+           if (serverStatePayload?.answers && Object.keys(serverStatePayload.answers).length > 0) {
+              localState.answers = { ...serverStatePayload.answers, ...localState.answers };
+           }
+           if (serverStatePayload?.timeLeft != null && serverStatePayload.timeLeft < localState.timeLeft) {
+              localState.timeLeft = serverStatePayload.timeLeft;
+           }
+           if (serverStatePayload?.tabSwitchCount != null && serverStatePayload.tabSwitchCount > (localState.tabSwitchCount || 0)) {
+              localState.tabSwitchCount = serverStatePayload.tabSwitchCount;
+           }
+           await db.examStates.put(localState);
            return localState; // Offline-first / Rehydration
         } else {
+           const initialAnswers = (isResumed && serverStatePayload?.answers) ? serverStatePayload.answers : {};
+           const initialTimeLeft = (isResumed && serverStatePayload?.timeLeft != null) ? serverStatePayload.timeLeft : 7200;
+           const initialTabSwitches = (isResumed && serverStatePayload?.tabSwitchCount != null) ? serverStatePayload.tabSwitchCount : 0;
            const newState: LocalExamState = {
                id: realSessionId,
                shuffleSeed: serverSeed,
-               answers: {},
+               answers: initialAnswers,
                lastUpdated: Date.now(),
-               timeLeft: 7200,
+               timeLeft: initialTimeLeft,
+               tabSwitchCount: initialTabSwitches,
                isSynced: true
            };
            await db.examStates.put(newState);
@@ -192,8 +209,15 @@ export const hydrateFromServer = createAsyncThunk(
         try {
             const response = await axios.get('/api/v1/exams/active/session');
             const serverState = response.data.data;
-            if (serverState && serverState.lastSyncedAt > state.lastUpdated) {
-                return serverState;
+            if (serverState) {
+                const hasLocalAnswers = Object.keys(state.answers).length > 0;
+                const hasServerAnswers = serverState.answers && Object.keys(serverState.answers).length > 0;
+                if (!hasLocalAnswers && hasServerAnswers) {
+                    return serverState;
+                }
+                if (serverState.lastSyncedAt > state.lastUpdated) {
+                    return serverState;
+                }
             }
             return null;
         } catch (e) {

@@ -95,4 +95,24 @@ test.describe('StudentPrep CBT Platform E2E Tests', () => {
     // Verify navigation to results page
     await expect(page).toHaveURL(/.*\/result/);
   });
+
+  test('exam session resumption on back button and refresh', async ({ page }) => {
+    await expect(page.getByText(/idle|synced/i, { exact: true })).toBeVisible();
+    
+    // Select answer for question 1
+    await page.getByText('A', { exact: true }).click();
+    
+    // Navigate back to dashboard
+    await page.goto('/dashboard');
+    await expect(page.getByText('Student Dashboard')).toBeVisible();
+    
+    // Resume exam
+    await page.getByRole('button', { name: /Start Examination|Resume Examination/i }).click();
+    await expect(page.locator('h1').filter({ hasText: 'StudentPrep CBT' })).toBeVisible();
+    
+    // Perform hard refresh on exam page
+    await page.reload();
+    await expect(page.locator('h1').filter({ hasText: 'StudentPrep CBT' })).toBeVisible();
+    await expect(page.getByText(/idle|synced/i, { exact: true })).toBeVisible();
+  });
 });

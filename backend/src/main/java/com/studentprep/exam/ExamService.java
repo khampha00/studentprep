@@ -58,39 +58,84 @@ public class ExamService {
             );
         }
 
-        // Bug fix: Check for existing IN_PROGRESS session to prevent duplicate key violation
-        // on idx_unique_active_session partial unique index
+        Instant now = Instant.now();
+
+        // Check for existing IN_PROGRESS session.
+        // If an active session already exists, resume it instead of abandoning it!
         java.util.Optional<ExamSession> existingSession = sessionRepository.findByUserIdAndStatus(userId, "IN_PROGRESS");
         if (existingSession.isPresent()) {
             ExamSession existing = existingSession.get();
-            // Close the stale session (e.g. from a tab-switch violation that didn't clean up)
-            existing.setStatus("SUBMITTED");
-            existing.setEndTime(Instant.now());
-            if (existing.getStatePayload() == null) {
-                existing.setStatePayload(new HashMap<>());
+            Instant expectedEndTime = existing.getStartTime().plus(EXAM_DURATION_MINUTES, ChronoUnit.MINUTES);
+
+            // If time has completely expired including grace period, finalize session
+            if (now.isAfter(expectedEndTime.plus(LATE_SUBMISSION_GRACE_SECONDS, ChronoUnit.SECONDS))) {
+                finalizeExamSession(existing, "TIME_EXPIRED");
+                throw new org.springframework.web.server.ResponseStatusException(
+                        org.springframework.http.HttpStatus.BAD_REQUEST,
+                        "Your exam duration has expired. Session has been submitted."
+                );
             }
-            existing.getStatePayload().put("autoClosedReason", "NEW_SESSION_REQUESTED");
-            sessionRepository.saveAndFlush(existing);
+
+            // Resume active session
+            long elapsedSeconds = ChronoUnit.SECONDS.between(existing.getStartTime(), now);
+            int remainingSeconds = (int) Math.max(0, (EXAM_DURATION_MINUTES * 60) - elapsedSeconds);
+
+            Map<String, Object> statePayload = existing.getStatePayload() != null
+                    ? new HashMap<>(existing.getStatePayload())
+                    : new HashMap<>();
+
+            if (statePayload.containsKey("timeLeft") && statePayload.get("timeLeft") instanceof Number num) {
+                int savedTime = num.intValue();
+                statePayload.put("timeLeft", Math.min(savedTime, remainingSeconds));
+            } else {
+                statePayload.put("timeLeft", remainingSeconds);
+            }
+            existing.setStatePayload(statePayload);
+            sessionRepository.save(existing);
+
+            ExamPayloadResponse payload = getActivePayload(userId);
+            Map<String, Object> payloadMap = new HashMap<>();
+            payloadMap.put("questions", payload.getQuestions());
+            payloadMap.put("contexts", payload.getContexts());
+            payloadMap.put("durationMinutes", payload.getDurationMinutes());
+            payloadMap.put("resumed", true);
+            payloadMap.put("answers", statePayload.get("answers"));
+            payloadMap.put("timeLeft", statePayload.get("timeLeft"));
+            payloadMap.put("tabSwitchCount", statePayload.get("tabSwitchCount"));
+
+            int shuffleSeed = existing.getShuffleSeed() != null ? existing.getShuffleSeed() : 1234;
+            return new ExamStartResponse(existing.getId(), shuffleSeed, payloadMap, statePayload, true);
         }
 
         ExamPayloadResponse payload = getActivePayload(userId);
-        
         int shuffleSeed = ThreadLocalRandom.current().nextInt(1000, 9999);
 
         ExamSession session = new ExamSession();
         session.setUserId(userId);
-        session.setStartTime(Instant.now());
+        session.setStartTime(now);
         session.setStatus("IN_PROGRESS");
         session.setShuffleSeed(shuffleSeed);
+
+        Map<String, Object> initialState = new HashMap<>();
+        initialState.put("answers", new HashMap<>());
+        initialState.put("timeLeft", EXAM_DURATION_MINUTES * 60);
+        initialState.put("lastUpdated", System.currentTimeMillis());
+        initialState.put("tabSwitchCount", 0);
+        session.setStatePayload(initialState);
         session = sessionRepository.save(session);
 
         Map<String, Object> payloadMap = new HashMap<>();
         payloadMap.put("questions", payload.getQuestions());
         payloadMap.put("contexts", payload.getContexts());
         payloadMap.put("durationMinutes", payload.getDurationMinutes());
-        
-        return new ExamStartResponse(session.getId(), shuffleSeed, payloadMap);
+        payloadMap.put("resumed", false);
+        payloadMap.put("answers", initialState.get("answers"));
+        payloadMap.put("timeLeft", initialState.get("timeLeft"));
+        payloadMap.put("tabSwitchCount", 0);
+
+        return new ExamStartResponse(session.getId(), shuffleSeed, payloadMap, initialState, false);
     }
+
 
     private ExamSession resolveSession(UUID sessionId, UUID studentId) {
         if (sessionId != null) {
@@ -253,11 +298,22 @@ public class ExamService {
                 result.put("status", session.getStatus());
                 result.put("startTime", session.getStartTime().toString());
                 result.put("shuffleSeed", session.getShuffleSeed());
+
+                long elapsedSeconds = ChronoUnit.SECONDS.between(session.getStartTime(), Instant.now());
+                int wallClockRemaining = (int) Math.max(0, (EXAM_DURATION_MINUTES * 60) - elapsedSeconds);
+
                 if (session.getStatePayload() != null) {
                     result.put("answers", session.getStatePayload().get("answers"));
-                    result.put("timeLeft", session.getStatePayload().get("timeLeft"));
+                    Object savedTime = session.getStatePayload().get("timeLeft");
+                    if (savedTime instanceof Number num) {
+                        result.put("timeLeft", Math.min(num.intValue(), wallClockRemaining));
+                    } else {
+                        result.put("timeLeft", wallClockRemaining);
+                    }
                     result.put("lastSyncedAt", session.getStatePayload().get("lastUpdated"));
                     result.put("tabSwitchCount", session.getStatePayload().get("tabSwitchCount"));
+                } else {
+                    result.put("timeLeft", wallClockRemaining);
                 }
                 return result;
             })

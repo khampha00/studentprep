@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
+import { useNavigate } from 'react-router-dom';
 import type { AppDispatch, RootState } from '../../store/store';
-import { tickTimer, syncExamData, recordViolation, acknowledgeWarning, hydrateFromServer } from '../../store/examSlice';
+import { tickTimer, syncExamData, recordViolation, acknowledgeWarning, hydrateFromServer, initializeExam, fetchExamPayload } from '../../store/examSlice';
 import { CheckCircle2, AlertCircle } from 'lucide-react';
 import { cn } from '../../App';
 import { Button } from '../../components/ui/button';
@@ -14,11 +15,35 @@ import QuestionRenderer from '../../components/QuestionRenderer';
 
 export default function ExamDashboard() {
   const dispatch = useDispatch<AppDispatch>();
+  const navigate = useNavigate();
   const exam = useSelector((state: RootState) => state.exam);
 
   useEffect(() => {
-    dispatch(hydrateFromServer());
-  }, [dispatch]);
+    if (!exam.questions || exam.questions.length === 0) {
+      dispatch(initializeExam())
+        .unwrap()
+        .then(() => {
+          dispatch(fetchExamPayload());
+        })
+        .catch((err: any) => {
+          console.error("Failed to rehydrate active exam:", err);
+          navigate('/dashboard');
+        });
+    } else {
+      dispatch(hydrateFromServer());
+    }
+  }, [dispatch, exam.questions?.length, navigate]);
+
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!exam.isExamTerminated) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [exam.isExamTerminated]);
 
   useEffect(() => {
     let debounceTimer: ReturnType<typeof setTimeout>;

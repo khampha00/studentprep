@@ -84,7 +84,7 @@ public class AuthController {
         }
         String identifier = jwtUtil.extractIdentifier(refreshToken);
         
-        java.util.Optional<com.studentprep.student.Student> studentOpt = studentRepository.findByRegistrationNumber(identifier);
+        java.util.Optional<com.studentprep.student.Student> studentOpt = studentRepository.findByRegistrationNumberIgnoreCase(identifier);
         if (studentOpt.isPresent()) {
             com.studentprep.student.Student student = studentOpt.get();
             if (examSessionRepository.existsByUserIdAndStatus(student.getId(), "FLAGGED_TAB_SWITCH")) {

@@ -49,6 +49,10 @@ axios.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
+    if (originalRequest?.url?.includes('/api/v1/auth/refresh') || originalRequest?.url?.includes('/api/v1/auth/login')) {
+      return Promise.reject(error);
+    }
+
     if (error.response && error.response.status === 401 && !originalRequest._retry) {
       if (isRefreshing) {
         return new Promise(function (resolve, reject) {
@@ -78,9 +82,9 @@ axios.interceptors.response.use(
         processQueue(refreshError, null);
         localStorage.removeItem('token');
         if (window.location.pathname.startsWith('/admin')) {
-          window.location.href = '/admin';
+          window.location.href = '/admin?error=session_expired';
         } else {
-          window.location.href = '/';
+          window.location.href = '/?error=session_expired';
         }
         return Promise.reject(refreshError);
       } finally {

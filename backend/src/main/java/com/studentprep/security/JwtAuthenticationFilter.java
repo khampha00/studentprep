@@ -46,7 +46,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             if (storedJti == null || !storedJti.equals(jti)) {
                 if (!request.getRequestURI().startsWith("/api/v1/auth/")) {
                     response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-                    response.getWriter().write("Session active on another device");
+                    response.setContentType("application/json");
+                    response.setCharacterEncoding("UTF-8");
+                    response.getWriter().write("{\"status\":401,\"message\":\"Session active on another device\"}");
+                    response.getWriter().flush();
                     return;
                 }
                 filterChain.doFilter(request, response);

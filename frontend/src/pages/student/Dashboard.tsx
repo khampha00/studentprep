@@ -1,17 +1,42 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDispatch } from 'react-redux';
+import axios from 'axios';
 import type { AppDispatch } from '../../store/store';
 import { initializeExam, fetchExamPayload } from '../../store/examSlice';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '../../components/ui/card';
-import { AlertTriangle, BookOpen, Clock, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, BookOpen, Clock, ShieldCheck, PlayCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const dispatch = useDispatch<AppDispatch>();
   const [isLoading, setIsLoading] = useState(false);
+  const [hasActiveExam, setHasActiveExam] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+    const checkActiveSession = async () => {
+      try {
+        const res = await axios.get('/api/v1/exams/active/session');
+        if (isMounted && res.data?.data?.status === 'IN_PROGRESS') {
+          setHasActiveExam(true);
+        } else if (isMounted) {
+          setHasActiveExam(false);
+        }
+      } catch (err) {
+        // If 401, axios interceptor handles session eviction
+      }
+    };
+
+    checkActiveSession();
+    const interval = setInterval(checkActiveSession, 10000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, []);
 
   const handleStartExam = async () => {
     setIsLoading(true);
@@ -79,6 +104,18 @@ export default function Dashboard() {
             </div>
           </div>
           
+          {hasActiveExam && (
+            <div className="mb-6 bg-emerald-50 border-2 border-[#008751] p-4 rounded-lg flex items-start gap-3">
+              <PlayCircle className="text-[#008751] w-5 h-5 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-bold text-slate-900">Active Examination In Progress</p>
+                <p className="text-xs text-slate-700 mt-0.5">
+                  You have an unfinished examination attempt. Click <strong>Resume Examination</strong> below to continue your session. Your timer and saved answers are preserved.
+                </p>
+              </div>
+            </div>
+          )}
+
           <div className="bg-amber-50 border border-amber-200 p-4 rounded-lg flex items-start gap-3">
             <AlertTriangle className="text-amber-600 w-5 h-5 shrink-0 mt-0.5" />
             <p className="text-sm text-amber-800">
@@ -88,8 +125,8 @@ export default function Dashboard() {
         </CardContent>
         <CardFooter className="flex justify-between border-t border-slate-100 bg-slate-50 p-6 rounded-b-xl">
           <Button variant="outline" onClick={handleLogout}>Logout</Button>
-          <Button onClick={handleStartExam} disabled={isLoading} className="px-8 font-bold">
-            {isLoading ? 'Preparing Exam...' : 'Start Examination'}
+          <Button onClick={handleStartExam} disabled={isLoading} aria-label="Start Examination" className="px-8 font-bold">
+            {isLoading ? 'Preparing Exam...' : hasActiveExam ? 'Resume Examination' : 'Start Examination'}
           </Button>
         </CardFooter>
       </Card>
