@@ -54,6 +54,18 @@ axios.interceptors.response.use(
     }
 
     if (error.response && error.response.status === 401 && !originalRequest._retry) {
+      // If the 401 is due to concurrent login on another device, evict immediately
+      const isAnotherDevice = error.response.data?.message === 'Session active on another device';
+      if (isAnotherDevice) {
+        localStorage.removeItem('token');
+        if (window.location.pathname.startsWith('/admin')) {
+          window.location.href = '/admin?error=session_expired';
+        } else {
+          window.location.href = '/?error=session_expired';
+        }
+        return Promise.reject(error);
+      }
+
       if (isRefreshing) {
         return new Promise(function (resolve, reject) {
           failedQueue.push({ resolve, reject });

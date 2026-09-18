@@ -1,3 +1,44 @@
 spring:
+  config:
+    import: optional:file:../.env[.properties]
+  mvc:
+    problem-details:
+      enabled: true
+  application:
+    name: studentprep-backend
+  datasource:
+    url: ${POSTGRES_URL}
+    username: ${POSTGRES_USER}
+    password: ${POSTGRES_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+    open-in-view: false
   flyway:
+    enabled: true
+    baseline-on-migrate: true
     validate-on-migrate: false
+  data:
+    redis:
+      host: ${REDIS_HOST}
+      password: ${REDIS_PASSWORD}
+      port: 6379
+
+security:
+  jwt:
+    secret: ${JWT_SECRET}
+    expiration-ms: ${JWT_EXPIRATION_MS}
+
+gemini:
+  model: ${GEMINI_MODEL:gemini-3.5-flash-lite}
+
+server:
+  port: 8080
+  error:
+    include-message: always
+    include-binding-errors: always

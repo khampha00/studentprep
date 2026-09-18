@@ -94,6 +94,10 @@ export const syncExamData = createAsyncThunk(
         const isFinalSync = payload?.isFinal || state.isExamTerminated;
         const reason = payload?.reason || (state.isExamTerminated ? 'FLAGGED_TAB_SWITCH' : 'NORMAL');
         
+        if (!state.sessionId) {
+            return true;
+        }
+
         try {
             if (isFinalSync && state.sessionId) {
                 await db.examStates.update(state.sessionId, { 
@@ -103,7 +107,7 @@ export const syncExamData = createAsyncThunk(
                 });
             }
 
-            const sessionParam = state.sessionId ? `?sessionId=${state.sessionId}` : '';
+            const sessionParam = `?sessionId=${state.sessionId}`;
             await axios.post(`/api/v1/exams/active/sync${sessionParam}`, {
                 statePayload: {
                     answers: state.answers,
@@ -193,9 +197,19 @@ const examSlice = createSlice({
       builder.addCase(syncExamData.rejected, (state) => { state.syncStatus = 'error'; });
       builder.addCase(hydrateFromServer.fulfilled, (state, action) => {
           if (action.payload) {
-              state.answers = action.payload.answers || state.answers;
-              state.timeLeft = action.payload.timeLeft ?? state.timeLeft;
-              state.lastUpdated = action.payload.lastSyncedAt;
+              const incomingAnswers = action.payload.answers;
+              if (incomingAnswers && Object.keys(incomingAnswers).length > 0) {
+                  state.answers = { ...incomingAnswers, ...state.answers };
+              }
+              if (action.payload.timeLeft != null) {
+                  state.timeLeft = Math.min(state.timeLeft, action.payload.timeLeft);
+              }
+              if (action.payload.lastSyncedAt) {
+                  state.lastUpdated = Math.max(state.lastUpdated, action.payload.lastSyncedAt);
+              }
+              if (action.payload.tabSwitchCount != null && action.payload.tabSwitchCount > state.tabSwitchCount) {
+                  state.tabSwitchCount = action.payload.tabSwitchCount;
+              }
           }
       });
   }
@@ -208,14 +222,17 @@ export const hydrateFromServer = createAsyncThunk(
         const state = (getState() as RootStateType).exam;
         try {
             const response = await axios.get('/api/v1/exams/active/session');
-            const serverState = response.data.data;
-            if (serverState) {
+            const serverState = response.data?.data;
+            if (serverState && serverState.status === 'IN_PROGRESS') {
                 const hasLocalAnswers = Object.keys(state.answers).length > 0;
                 const hasServerAnswers = serverState.answers && Object.keys(serverState.answers).length > 0;
                 if (!hasLocalAnswers && hasServerAnswers) {
                     return serverState;
                 }
                 if (serverState.lastSyncedAt > state.lastUpdated) {
+                    return serverState;
+                }
+                if (serverState.timeLeft != null && serverState.timeLeft < state.timeLeft) {
                     return serverState;
                 }
             }

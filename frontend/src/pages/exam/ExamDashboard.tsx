@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
+import axios from 'axios';
+import { toast } from 'sonner';
 import type { AppDispatch, RootState } from '../../store/store';
 import { tickTimer, syncExamData, recordViolation, acknowledgeWarning, hydrateFromServer, initializeExam, fetchExamPayload } from '../../store/examSlice';
 import { CheckCircle2, AlertCircle } from 'lucide-react';
@@ -33,6 +35,34 @@ export default function ExamDashboard() {
       dispatch(hydrateFromServer());
     }
   }, [dispatch, exam.questions?.length, navigate]);
+
+  useEffect(() => {
+    // Prevent accidental browser back button navigation out of exam
+    window.history.pushState(null, '', window.location.href);
+    const handlePopState = () => {
+      if (!exam.isExamTerminated) {
+        window.history.pushState(null, '', window.location.href);
+        dispatch(syncExamData());
+        toast.warning('Browser back navigation is disabled during the examination. Please use the on-screen question navigation or Submit button.');
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [exam.isExamTerminated, dispatch]);
+
+  useEffect(() => {
+    // 5s active session heartbeat to detect concurrent login on another device
+    const heartbeat = setInterval(async () => {
+      try {
+        await axios.get('/api/v1/exams/active/session');
+      } catch (err) {
+        // Interceptor evicts immediately on 401
+      }
+    }, 5000);
+
+    return () => clearInterval(heartbeat);
+  }, []);
+
 
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {

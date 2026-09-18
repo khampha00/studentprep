@@ -15,13 +15,13 @@ test.describe('StudentPrep CBT Platform E2E Tests', () => {
         { id: 'q2', content: { text: 'Question 2', options: { 'o3': 'B', 'o4': 'D' } } }
       ], contexts: {} } } });
     });
-    await page.route('/api/v1/exams/active/session', async route => {
-      await route.fulfill({ json: { data: { lastSyncedAt: 0 } } });
+    await page.route(/\/api\/v1\/exams\/active\/session/, async route => {
+      await route.fulfill({ json: { data: { status: 'IN_PROGRESS', timeLeft: 7150, lastSyncedAt: 0 } } });
     });
-    await page.route('/api/v1/exams/active/sync**', async route => {
+    await page.route(/\/api\/v1\/exams\/active\/sync/, async route => {
       await route.fulfill({ json: { data: { success: true } } });
     });
-    await page.route('/api/v1/exams/active/submit**', async route => {
+    await page.route(/\/api\/v1\/exams\/active\/submit/, async route => {
       await route.fulfill({ json: { data: { success: true } } });
     });
     
@@ -32,7 +32,7 @@ test.describe('StudentPrep CBT Platform E2E Tests', () => {
     await page.locator('input[type="password"]').fill('password123');
     await page.getByRole('button', { name: 'Login' }).click();
     await expect(page.getByText('Student Dashboard')).toBeVisible();
-    await page.getByRole('button', { name: /Start Examination/i }).click();
+    await page.getByRole('button', { name: /Start Examination|Resume Examination/i }).click();
     await expect(page.locator('h1').filter({ hasText: 'StudentPrep CBT' })).toBeVisible();
   });
 
@@ -101,18 +101,42 @@ test.describe('StudentPrep CBT Platform E2E Tests', () => {
     
     // Select answer for question 1
     await page.getByText('A', { exact: true }).click();
+    await expect(page.getByText('1/2')).toBeVisible();
     
     // Navigate back to dashboard
     await page.goto('/dashboard');
     await expect(page.getByText('Student Dashboard')).toBeVisible();
+    await expect(page.getByText('Active Examination In Progress')).toBeVisible();
     
     // Resume exam
-    await page.getByRole('button', { name: /Start Examination|Resume Examination/i }).click();
+    await page.getByRole('button', { name: /Resume Examination|Start Examination/i }).click();
     await expect(page.locator('h1').filter({ hasText: 'StudentPrep CBT' })).toBeVisible();
+    await expect(page.getByText('1/2')).toBeVisible();
     
     // Perform hard refresh on exam page
     await page.reload();
     await expect(page.locator('h1').filter({ hasText: 'StudentPrep CBT' })).toBeVisible();
     await expect(page.getByText(/idle|synced/i, { exact: true })).toBeVisible();
+    await expect(page.getByText('1/2')).toBeVisible();
+  });
+
+  test('single session per user: evicts when session active on another device', async ({ page }) => {
+    await expect(page.getByText(/idle|synced/i, { exact: true })).toBeVisible();
+    
+    // Simulate concurrent login on another device returning 401
+    await page.route('/api/v1/exams/active/session', async route => {
+      await route.fulfill({
+        status: 401,
+        contentType: 'application/json',
+        body: JSON.stringify({ status: 401, message: 'Session active on another device' })
+      });
+    });
+
+    // Trigger session check or wait for 5s heartbeat
+    await page.waitForTimeout(6000);
+
+    // Should be immediately evicted and redirected to login with session expired banner
+    await expect(page).toHaveURL(/.*\/\?error=session_expired/);
+    await expect(page.getByText(/Session Ended/i)).toBeVisible();
   });
 });
