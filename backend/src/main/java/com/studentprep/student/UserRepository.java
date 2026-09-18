@@ -6,4 +6,5 @@ import java.util.UUID;
 
 public interface UserRepository extends JpaRepository<User, UUID> {
     Optional<User> findByIdentifier(String identifier);
+    Optional<User> findByIdentifierIgnoreCase(String identifier);
 }

@@ -35,11 +35,14 @@ public class AuthController {
 
     @PostMapping("/login")
     public ResponseEntity<ApiResponse<Map<String, Object>>> login(@Valid @RequestBody LoginRequest request) {
+        String cleanIdentifier = request.identifier() != null ? request.identifier().trim() : "";
+        String cleanPin = request.pin() != null ? request.pin().trim() : "";
+
         Authentication authentication = authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(request.identifier(), request.pin())
+                new UsernamePasswordAuthenticationToken(cleanIdentifier, cleanPin)
         );
 
-        java.util.Optional<com.studentprep.student.Student> studentOpt = studentRepository.findByRegistrationNumber(request.identifier());
+        java.util.Optional<com.studentprep.student.Student> studentOpt = studentRepository.findByRegistrationNumberIgnoreCase(cleanIdentifier);
         if (studentOpt.isPresent()) {
             com.studentprep.student.Student student = studentOpt.get();
             if (examSessionRepository.existsByUserIdAndStatus(student.getId(), "FLAGGED_TAB_SWITCH")) {
@@ -56,10 +59,10 @@ public class AuthController {
                 .orElse("ROLE_STUDENT");
                 
         String jti = UUID.randomUUID().toString();
-        String token = jwtUtil.generateToken(request.identifier(), role, jti);
-        String refreshToken = jwtUtil.generateRefreshToken(request.identifier(), role, jti);
+        String token = jwtUtil.generateToken(authentication.getName(), role, jti);
+        String refreshToken = jwtUtil.generateRefreshToken(authentication.getName(), role, jti);
         
-        redisTemplate.opsForValue().set("session:" + request.identifier(), jti, Duration.ofDays(7));
+        redisTemplate.opsForValue().set("session:" + authentication.getName(), jti, Duration.ofDays(7));
 
         org.springframework.http.ResponseCookie cookie = org.springframework.http.ResponseCookie.from("refreshToken", refreshToken)
                 .httpOnly(true)

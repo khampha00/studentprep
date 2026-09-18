@@ -25,7 +25,7 @@ public class ExamController {
     private UUID getCurrentStudentId() {
         org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
         String identifier = auth.getName();
-        return studentRepository.findByRegistrationNumber(identifier)
+        return studentRepository.findByRegistrationNumberIgnoreCase(identifier)
                 .map(com.studentprep.student.Student::getId)
                 .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.UNAUTHORIZED, "Student not found"));
     }

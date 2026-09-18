@@ -29,8 +29,11 @@ export default function Login() {
     setIsLoading(true);
     setBlockedError(null);
     
+    const cleanId = identifier.trim();
+    const cleanPin = pin.trim();
+
     try {
-      const res = await axios.post('/api/v1/auth/login', { identifier, pin });
+      const res = await axios.post('/api/v1/auth/login', { identifier: cleanId, pin: cleanPin });
       const token = res.data.data.accessToken;
       localStorage.setItem('token', token);
       
@@ -74,10 +77,13 @@ export default function Login() {
             <input 
               type="text" 
               required 
+              autoCapitalize="characters"
+              autoCorrect="off"
+              spellCheck={false}
               value={identifier} 
-              onChange={e => setIdentifier(e.target.value)} 
+              onChange={e => setIdentifier(e.target.value.toUpperCase())} 
               className="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent text-slate-900" 
-              placeholder="e.g. 12345678AB" 
+              placeholder="e.g. JAMB-2026-XXXXXX" 
             />
           </div>
           <div className="flex flex-col gap-1">
@@ -86,9 +92,10 @@ export default function Login() {
             </Label>
             <input 
               type="password" 
+              inputMode="numeric"
               required 
               value={pin} 
-              onChange={e => setPin(e.target.value)} 
+              onChange={e => setPin(e.target.value.trim())} 
               className="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent text-slate-900" 
               placeholder="••••••••" 
             />

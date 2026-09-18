@@ -26,7 +26,8 @@ public class CustomUserDetailsService implements UserDetailsService {
 
     @Override
     public UserDetails loadUserByUsername(String identifier) throws UsernameNotFoundException {
-        Optional<User> userOpt = userRepository.findByIdentifier(identifier);
+        String cleanId = identifier != null ? identifier.trim() : "";
+        Optional<User> userOpt = userRepository.findByIdentifierIgnoreCase(cleanId);
         if (userOpt.isPresent()) {
             User user = userOpt.get();
             return new org.springframework.security.core.userdetails.User(
@@ -36,7 +37,7 @@ public class CustomUserDetailsService implements UserDetailsService {
             );
         }
 
-        Student student = studentRepository.findByRegistrationNumber(identifier)
+        Student student = studentRepository.findByRegistrationNumberIgnoreCase(cleanId)
                 .orElseThrow(() -> new UsernameNotFoundException("User not found: " + identifier));
 
         return new org.springframework.security.core.userdetails.User(

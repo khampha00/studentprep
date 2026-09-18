@@ -9,5 +9,7 @@ import java.util.UUID;
 @Repository
 public interface StudentRepository extends JpaRepository<Student, UUID> {
     Optional<Student> findByRegistrationNumber(String registrationNumber);
+    Optional<Student> findByRegistrationNumberIgnoreCase(String registrationNumber);
     boolean existsByRegistrationNumber(String registrationNumber);
+    boolean existsByRegistrationNumberIgnoreCase(String registrationNumber);
 }
