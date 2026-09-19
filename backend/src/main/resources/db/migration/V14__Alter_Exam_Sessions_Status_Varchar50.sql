@@ -1,0 +1,1 @@
+ALTER TABLE exam_sessions ALTER COLUMN status TYPE VARCHAR(50);

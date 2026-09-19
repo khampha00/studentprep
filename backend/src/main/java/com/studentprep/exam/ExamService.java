@@ -48,7 +48,7 @@ public class ExamService {
         this.studentRepository = studentRepository;
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = org.springframework.web.server.ResponseStatusException.class)
     public ExamStartResponse startExam(UUID userId) {
         // Block students who were previously flagged for malpractice
         if (sessionRepository.existsByUserIdAndStatus(userId, "FLAGGED_TAB_SWITCH")) {
@@ -306,17 +306,24 @@ public class ExamService {
         return response;
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public Map<String, Object> getActiveSession(UUID userId) {
         return sessionRepository.findByUserIdAndStatus(userId, "IN_PROGRESS")
             .map(session -> {
+                Instant expectedEndTime = session.getStartTime().plus(EXAM_DURATION_MINUTES, ChronoUnit.MINUTES);
+                Instant now = Instant.now();
+                if (now.isAfter(expectedEndTime.plus(LATE_SUBMISSION_GRACE_SECONDS, ChronoUnit.SECONDS))) {
+                    finalizeExamSession(session, "TIME_EXPIRED");
+                    return null;
+                }
+
                 Map<String, Object> result = new HashMap<>();
                 result.put("sessionId", session.getId());
                 result.put("status", session.getStatus());
                 result.put("startTime", session.getStartTime().toString());
                 result.put("shuffleSeed", session.getShuffleSeed());
 
-                long elapsedSeconds = ChronoUnit.SECONDS.between(session.getStartTime(), Instant.now());
+                long elapsedSeconds = ChronoUnit.SECONDS.between(session.getStartTime(), now);
                 int wallClockRemaining = (int) Math.max(0, (EXAM_DURATION_MINUTES * 60) - elapsedSeconds);
 
                 if (session.getStatePayload() != null) {
