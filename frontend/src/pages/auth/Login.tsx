@@ -50,7 +50,7 @@ export default function Login() {
       }
     } catch (e: any) {
       const errorMsg = e.response?.data?.detail || e.response?.data?.message || 'Login failed. Please check your credentials.';
-      if (e.response?.status === 403) {
+      if (e.response?.status === 403 || e.response?.status === 409) {
         setBlockedError(errorMsg);
       }
       toast.error(errorMsg);

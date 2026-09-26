@@ -16,8 +16,8 @@ public interface ExamResultRepository extends JpaRepository<ExamResult, UUID> {
     @Query("SELECT COUNT(e) FROM ExamResult e WHERE e.maxScore > 0 AND (CAST(e.totalScore AS double) / e.maxScore) > 0.5")
     long countPassedExams();
 
-    @Query("SELECT e FROM ExamResult e JOIN FETCH e.student")
-    java.util.List<ExamResult> findAllWithStudent();
+    @Query(value = "SELECT e FROM ExamResult e JOIN FETCH e.student", countQuery = "SELECT COUNT(e) FROM ExamResult e")
+    org.springframework.data.domain.Page<ExamResult> findAllWithStudent(org.springframework.data.domain.Pageable pageable);
 
     @Query("SELECT AVG(CAST(e.totalScore AS double) / e.maxScore) * 100 FROM ExamResult e WHERE e.maxScore > 0 AND e.examSessionId = :examId")
     Double getAverageScorePercentageByExamId(@org.springframework.data.repository.query.Param("examId") UUID examId);

@@ -12,6 +12,6 @@ import lombok.Setter;
 @Table(name = "users")
 public class User extends BaseEntity {
     private String identifier;
-    private String pinHash;
+    private String pin;
     private String role;
 }

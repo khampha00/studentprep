@@ -33,8 +33,8 @@ public class Student {
     @Column(name = "registration_number", nullable = false, unique = true, length = 50)
     private String registrationNumber;
 
-    @Column(name = "pin_hash", nullable = false)
-    private String pinHash;
+    @Column(name = "pin", nullable = false)
+    private String pin;
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)

@@ -2,7 +2,7 @@ import Dexie, { type Table } from 'dexie';
 
 export interface LocalExamState {
   id: string; // The exam session UUID
-  shuffleSeed: number;
+  shuffleSeed: number | null;
   answers: Record<string, string>; // questionId -> optionId
   lastUpdated: number; // Timestamp for conflict resolution
   timeLeft: number;
@@ -11,6 +11,7 @@ export interface LocalExamState {
   isExamTerminated?: boolean;
   isFinal?: boolean;
   terminationReason?: string;
+  flagged?: Record<string, boolean>;
 }
 
 export class StudentPrepDatabase extends Dexie {

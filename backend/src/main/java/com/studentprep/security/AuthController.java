@@ -13,6 +13,8 @@ import java.util.UUID;
 import java.time.Duration;
 import com.studentprep.common.ApiResponse;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import com.studentprep.student.StudentInternalAPI;
+import com.studentprep.exam.ExamInternalAPI;
 
 @RestController
 @RequestMapping("/api/v1/auth")
@@ -20,17 +22,17 @@ public class AuthController {
     private final AuthenticationManager authenticationManager;
     private final JwtUtil jwtUtil;
     private final StringRedisTemplate redisTemplate;
-    private final com.studentprep.student.StudentRepository studentRepository;
-    private final com.studentprep.exam.ExamSessionRepository examSessionRepository;
+    private final StudentInternalAPI studentInternalAPI;
+    private final ExamInternalAPI examInternalAPI;
 
     public AuthController(AuthenticationManager authenticationManager, JwtUtil jwtUtil, StringRedisTemplate redisTemplate,
-                          com.studentprep.student.StudentRepository studentRepository,
-                          com.studentprep.exam.ExamSessionRepository examSessionRepository) {
+                          StudentInternalAPI studentInternalAPI,
+                          ExamInternalAPI examInternalAPI) {
         this.authenticationManager = authenticationManager;
         this.jwtUtil = jwtUtil;
         this.redisTemplate = redisTemplate;
-        this.studentRepository = studentRepository;
-        this.examSessionRepository = examSessionRepository;
+        this.studentInternalAPI = studentInternalAPI;
+        this.examInternalAPI = examInternalAPI;
     }
 
     @PostMapping("/login")
@@ -42,13 +44,19 @@ public class AuthController {
                 new UsernamePasswordAuthenticationToken(cleanIdentifier, cleanPin)
         );
 
-        java.util.Optional<com.studentprep.student.Student> studentOpt = studentRepository.findByRegistrationNumberIgnoreCase(cleanIdentifier);
+        java.util.Optional<com.studentprep.student.Student> studentOpt = studentInternalAPI.findByRegistrationNumberIgnoreCase(cleanIdentifier);
         if (studentOpt.isPresent()) {
             com.studentprep.student.Student student = studentOpt.get();
-            if (examSessionRepository.existsByUserIdAndStatus(student.getId(), "FLAGGED_TAB_SWITCH")) {
+            if (examInternalAPI.hasFlaggedSession(student.getId())) {
                 throw new org.springframework.web.server.ResponseStatusException(
                         org.springframework.http.HttpStatus.FORBIDDEN,
                         "Your account has been blocked due to exam malpractice. You cannot log in."
+                );
+            }
+            if (examInternalAPI.hasActiveSession(student.getId())) {
+                throw new org.springframework.web.server.ResponseStatusException(
+                        org.springframework.http.HttpStatus.CONFLICT,
+                        "Only one session allowed. You already have an active examination in progress on another device."
                 );
             }
         }
@@ -61,8 +69,14 @@ public class AuthController {
         String jti = UUID.randomUUID().toString();
         String token = jwtUtil.generateToken(authentication.getName(), role, jti);
         String refreshToken = jwtUtil.generateRefreshToken(authentication.getName(), role, jti);
-        
-        redisTemplate.opsForValue().set("session:" + authentication.getName(), jti, Duration.ofDays(7));
+
+        Boolean sessionCreated = redisTemplate.opsForValue().setIfAbsent("session:" + authentication.getName(), jti, Duration.ofDays(7));
+        if (Boolean.FALSE.equals(sessionCreated)) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.CONFLICT,
+                "Only one session allowed. This account is already logged in on another device. Please log out first."
+            );
+        }
 
         org.springframework.http.ResponseCookie cookie = org.springframework.http.ResponseCookie.from("refreshToken", refreshToken)
                 .httpOnly(true)
@@ -77,6 +91,29 @@ public class AuthController {
                 .body(ApiResponse.of(Map.of("accessToken", token, "expiresIn", 900, "role", role)));
     }
 
+    @PostMapping("/logout")
+    public ResponseEntity<Void> logout(@org.springframework.web.bind.annotation.RequestHeader(value = "Authorization", required = false) String authHeader) {
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            String token = authHeader.substring(7);
+            try {
+                String identifier = jwtUtil.extractIdentifierAllowExpired(token);
+                redisTemplate.delete("session:" + identifier);
+            } catch (Exception ignored) {
+                // If token is malformed/expired, still expire the cookie
+            }
+        }
+        org.springframework.http.ResponseCookie expiredCookie = org.springframework.http.ResponseCookie.from("refreshToken", "")
+                .httpOnly(true)
+                .secure(false)
+                .sameSite("Lax")
+                .path("/api/v1/auth/refresh")
+                .maxAge(0)
+                .build();
+        return ResponseEntity.ok()
+                .header(org.springframework.http.HttpHeaders.SET_COOKIE, expiredCookie.toString())
+                .build();
+    }
+
     @PostMapping("/refresh")
     public ResponseEntity<ApiResponse<Map<String, Object>>> refresh(@CookieValue(name = "refreshToken", required = false) String refreshToken) {
         if (refreshToken == null || !jwtUtil.isTokenValid(refreshToken)) {
@@ -84,10 +121,10 @@ public class AuthController {
         }
         String identifier = jwtUtil.extractIdentifier(refreshToken);
         
-        java.util.Optional<com.studentprep.student.Student> studentOpt = studentRepository.findByRegistrationNumberIgnoreCase(identifier);
+        java.util.Optional<com.studentprep.student.Student> studentOpt = studentInternalAPI.findByRegistrationNumberIgnoreCase(identifier);
         if (studentOpt.isPresent()) {
             com.studentprep.student.Student student = studentOpt.get();
-            if (examSessionRepository.existsByUserIdAndStatus(student.getId(), "FLAGGED_TAB_SWITCH")) {
+            if (examInternalAPI.hasFlaggedSession(student.getId())) {
                 return ResponseEntity.status(403).build();
             }
         }

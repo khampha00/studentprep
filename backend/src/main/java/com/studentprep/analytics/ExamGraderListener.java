@@ -2,10 +2,10 @@ package com.studentprep.analytics;
 
 import com.studentprep.exam.ExamSubmittedEvent;
 import com.studentprep.questionbank.Question;
-import com.studentprep.questionbank.QuestionRepository;
+import com.studentprep.questionbank.QuestionInternalAPI;
 import com.studentprep.questionbank.Subject;
 import com.studentprep.student.Student;
-import com.studentprep.student.StudentRepository;
+import com.studentprep.student.StudentInternalAPI;
 import lombok.RequiredArgsConstructor;
 import org.springframework.modulith.events.ApplicationModuleListener;
 import org.springframework.stereotype.Component;
@@ -20,8 +20,8 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class ExamGraderListener {
 
-    private final StudentRepository studentRepository;
-    private final QuestionRepository questionRepository;
+    private final StudentInternalAPI studentInternalAPI;
+    private final QuestionInternalAPI questionInternalAPI;
     private final ExamResultRepository examResultRepository;
     private final LeaderboardService leaderboardService;
 
@@ -38,7 +38,7 @@ public class ExamGraderListener {
             answers = new HashMap<>();
         }
 
-        Student student = studentRepository.findById(studentId).orElse(null);
+        Student student = studentInternalAPI.findById(studentId).orElse(null);
         if (student == null) {
             System.err.println("Student not found for id: " + studentId);
             return;
@@ -50,7 +50,7 @@ public class ExamGraderListener {
 
         List<Question> activeQuestions = subjectIds.isEmpty() 
             ? java.util.Collections.emptyList() 
-            : questionRepository.findByStatusAndSubjectIdIn("ACTIVE", subjectIds);
+            : questionInternalAPI.getActiveQuestions().stream().filter(q -> q.getSubject() != null && subjectIds.contains(q.getSubject().getId())).collect(Collectors.toList());
 
         int totalScore = 0;
         int maxScore = 0;

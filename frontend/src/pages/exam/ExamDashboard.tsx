@@ -1,11 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { toast } from 'sonner';
 import type { AppDispatch, RootState } from '../../store/store';
-import { tickTimer, syncExamData, recordViolation, acknowledgeWarning, hydrateFromServer, initializeExam, fetchExamPayload } from '../../store/examSlice';
-import { CheckCircle2, AlertCircle } from 'lucide-react';
+import { tickTimer, syncExamData, recordViolation, acknowledgeWarning, hydrateFromServer, initializeExam, fetchExamPayload, toggleFlagQuestion } from '../../store/examSlice';
+import { CheckCircle2, AlertCircle, Flag } from 'lucide-react';
 import { cn } from '../../App';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '../../components/ui/card';
@@ -55,14 +55,10 @@ export default function ExamDashboard() {
     const heartbeat = setInterval(async () => {
       try {
         await axios.get('/api/v1/exams/active/session');
-      } catch (err) {
-        // Interceptor evicts immediately on 401
-      }
+      } catch (err) {}
     }, 5000);
-
     return () => clearInterval(heartbeat);
   }, []);
-
 
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -105,15 +101,15 @@ export default function ExamDashboard() {
       // Auto-submit the exam to the server with FLAGGED_TAB_SWITCH reason
       dispatch(syncExamData({ isFinal: true, reason: 'FLAGGED_TAB_SWITCH' }))
         .then(() => {
-          // After submission, wait 3 seconds to let the student read the message, then force logout
           setTimeout(() => {
+            axios.post('/api/v1/auth/logout', {}, { withCredentials: true }).catch(() => {});
             localStorage.removeItem('token');
             window.location.href = '/?terminated=malpractice';
           }, 3000);
         })
         .catch(() => {
-          // Even if sync fails, still logout after delay
           setTimeout(() => {
+            axios.post('/api/v1/auth/logout', {}, { withCredentials: true }).catch(() => {});
             localStorage.removeItem('token');
             window.location.href = '/?terminated=malpractice';
           }, 3000);
@@ -136,20 +132,55 @@ export default function ExamDashboard() {
   }, [dispatch]);
 
   const questions = useSelector((state: RootState) => state.exam.questions);
-  const [currentIdx, setCurrentIdx] = useState(0);
+
+  // Group questions by subject
+  const subjects = useMemo(() => {
+    const subs = new Map<string, { id: string; name: string }>();
+    questions.forEach(q => {
+       const subject = q.subject || { id: 'unknown', name: 'Unknown Subject' };
+       if (!subs.has(subject.id)) {
+           subs.set(subject.id, subject);
+       }
+    });
+    return Array.from(subs.values());
+  }, [questions]);
+
+  const [currentSubjectId, setCurrentSubjectId] = useState<string | null>(null);
   
+  useEffect(() => {
+    if (!currentSubjectId && subjects.length > 0) {
+      setCurrentSubjectId(subjects[0].id);
+    }
+  }, [subjects, currentSubjectId]);
+
+  const currentSubjectQuestions = useMemo(() => {
+    if (!currentSubjectId) return [];
+    return questions.filter(q => (q.subject?.id || 'unknown') === currentSubjectId);
+  }, [questions, currentSubjectId]);
+
+  // Maintain the current question index per subject
+  const [subjectIndexes, setSubjectIndexes] = useState<Record<string, number>>({});
+  
+  const handleSetSubjectIdx = (idx: number) => {
+    if (currentSubjectId) {
+      setSubjectIndexes(prev => ({ ...prev, [currentSubjectId]: idx }));
+    }
+  };
+
   if (exam.payloadError) {
     return <div className="min-h-screen flex items-center justify-center font-bold text-destructive">{exam.payloadError}</div>;
   }
 
-  if (!questions || questions.length === 0) {
+  if (!questions || questions.length === 0 || !currentSubjectId) {
     return <div className="min-h-screen flex items-center justify-center font-bold text-slate-500">Loading Exam...</div>;
   }
   
-  // Safe bounds check
-  const safeIdx = currentIdx < questions.length ? currentIdx : 0;
-  const currentQ = questions[safeIdx];
+  const safeIdx = subjectIndexes[currentSubjectId] || 0;
+  const currentQ = currentSubjectQuestions[safeIdx];
   const sharedContext = currentQ?.contextId ? exam.contexts[currentQ.contextId] : null;
+
+  const currentSubjectObj = subjects.find(s => s.id === currentSubjectId);
+  const isFlagged = exam.flagged?.[currentQ?.id];
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50">
@@ -182,63 +213,170 @@ export default function ExamDashboard() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
-        <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-primary rounded text-white flex items-center justify-center font-bold">SP</div>
-            <h1 className="font-bold text-slate-900 text-lg">StudentPrep CBT</h1>
+      {/* Top bar: Candidate details, Current Subject, Time Remaining */}
+      <header className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10 p-4">
+        <div className="max-w-7xl mx-auto flex flex-col lg:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-4 text-sm bg-slate-50 p-2.5 rounded-lg border border-slate-200 shadow-sm w-full lg:w-auto overflow-x-auto">
+             <div className="font-semibold text-slate-900 border-r border-slate-300 pr-4 whitespace-nowrap">Candidate: {exam.student?.name || 'Unknown'}</div>
+             <div className="font-semibold text-slate-900 border-r border-slate-300 pr-4 whitespace-nowrap">Reg No: {exam.student?.registrationNumber || 'Unknown'}</div>
+             <div className="font-semibold text-slate-900 whitespace-nowrap">Center: {exam.student?.examCenter || 'Unknown'}</div>
           </div>
-          <div className="flex items-center gap-6">
-              <div className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-full">
-                {exam.syncStatus === 'synced' ? <CheckCircle2 className="w-4 h-4 text-primary" /> :
-                 exam.syncStatus === 'syncing' ? <div className="w-4 h-4 rounded-full border-2 border-primary border-t-transparent animate-spin" /> :
-                 <AlertCircle className="w-4 h-4 text-orange-500" />}
-                <span className={cn("text-xs font-bold uppercase tracking-wider", exam.syncStatus === 'error' ? "text-orange-600" : "text-slate-600")}>
-                  {exam.syncStatus === 'error' ? 'Saving Locally' : exam.syncStatus}
-                </span>
-              </div>
+          
+          <div className="flex items-center gap-2 overflow-x-auto w-full lg:w-auto pb-2 lg:pb-0" role="tablist">
+            {subjects.map(subject => (
+              <Button
+                key={subject.id}
+                role="tab"
+                aria-selected={subject.id === currentSubjectId}
+                variant={subject.id === currentSubjectId ? 'default' : 'outline'}
+                className={cn(
+                  "font-bold uppercase tracking-wider whitespace-nowrap",
+                  subject.id === currentSubjectId ? "bg-primary text-white hover:bg-primary/90" : "text-slate-600 hover:text-slate-900"
+                )}
+                onClick={() => setCurrentSubjectId(subject.id)}
+              >
+                {subject.name}
+              </Button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-4 w-full lg:w-auto justify-between lg:justify-end">
+            <div className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-full whitespace-nowrap">
+              {exam.syncStatus === 'synced' ? <CheckCircle2 className="w-4 h-4 text-primary" /> :
+               exam.syncStatus === 'syncing' ? <div className="w-4 h-4 rounded-full border-2 border-primary border-t-transparent animate-spin" /> :
+               <AlertCircle className="w-4 h-4 text-orange-500" />}
+              <span className={cn("text-xs font-bold uppercase tracking-wider", exam.syncStatus === 'error' ? "text-orange-600" : "text-slate-600")}>
+                {exam.syncStatus === 'error' ? 'Saving Locally' : exam.syncStatus}
+              </span>
+            </div>
             <ExamTimer />
-            <SubmitButton>Submit Final</SubmitButton>
           </div>
         </div>
       </header>
 
-      <main className="flex-1 max-w-6xl mx-auto w-full p-4 md:p-8 grid grid-cols-1 md:grid-cols-4 gap-8">
-        <div className="md:col-span-1 space-y-6">
-          <Card>
-            <CardHeader className="pb-3 border-b mb-4 bg-white">
-              <CardTitle className="text-sm font-bold uppercase tracking-wider text-slate-500">Candidate Info</CardTitle>
+      <main className="flex-1 max-w-7xl mx-auto w-full p-4 lg:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+        
+        {/* Left Sidebar: Instructions */}
+        <div className="lg:col-span-3 space-y-4 order-3 lg:order-1">
+          <Card className="h-full bg-slate-50 flex flex-col">
+            <CardHeader className="pb-3 border-b bg-slate-50">
+              <CardTitle className="text-sm font-bold uppercase tracking-wider text-slate-600">Instructions</CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 gap-y-2 text-sm">
-                <span className="text-slate-500">Name:</span><span className="font-semibold text-slate-900 truncate">Student Candidate</span>
-                <span className="text-slate-500">Reg No:</span><span className="font-semibold text-slate-900">Enrolled</span>
-                <span className="text-slate-500">Center:</span><span className="font-semibold text-slate-900">Assigned</span>
-              </div>
+            <CardContent className="p-4 text-sm text-slate-700 space-y-3 flex-1">
+              <ul className="list-disc pl-4 space-y-2">
+                <li>Read each question carefully before selecting an option.</li>
+                <li>You can <strong>Flag</strong> questions you are unsure about to review them later.</li>
+                <li>Your progress is grouped by subject. Ensure you review all subjects using the tabs above.</li>
+                <li>Do not switch tabs or leave the exam window. This will result in an immediate strike.</li>
+                <li>Your answers are automatically saved periodically.</li>
+                <li>Click <strong>Submit Final</strong> when you have finished all subjects.</li>
+              </ul>
             </CardContent>
           </Card>
-          <Card className="h-full flex flex-col">
-            <CardHeader className="pb-3 border-b flex flex-row items-center justify-between bg-white">
-              <CardTitle className="text-sm font-bold uppercase tracking-wider text-slate-500">Question Map</CardTitle>
-              <span className="text-xs font-medium bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full">
-                {Object.keys(exam.answers).length}/{questions.length}
+        </div>
+
+        {/* Center Area: Current Question */}
+        <div className="lg:col-span-6 flex flex-col order-1 lg:order-2">
+          <Card className="p-0 overflow-hidden flex flex-col flex-1 shadow-sm bg-slate-50 min-h-[500px]">
+            <CardHeader className="flex flex-row justify-between items-center mb-0 border-b p-4 bg-slate-50 shrink-0">
+              <CardTitle className="text-lg font-bold text-slate-800">
+                {currentSubjectObj?.name} - Question {safeIdx + 1} of {currentSubjectQuestions.length}
+              </CardTitle>
+            </CardHeader>
+            
+            <CardContent className="p-0 flex-1 flex flex-col relative">
+              {sharedContext && (
+                <div className="p-4 lg:p-6 border-b border-slate-200 bg-slate-50 overflow-y-auto max-h-[40vh]">
+                  <div className="mb-4">
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500 bg-slate-200 px-2 py-1 rounded">Shared Context</span>
+                  </div>
+                  <RichText text={sharedContext} />
+                </div>
+              )}
+              
+              <div className="p-4 lg:p-6 overflow-y-auto max-h-[60vh] flex-1">
+                <div className="text-slate-800 text-lg leading-relaxed mb-8">
+                  {currentQ?.content?.assets && currentQ.content.assets.map((asset: any, i: number) => (
+                    asset.type === 'IMAGE' && <img key={i} src={asset.url} alt={asset.alt} className="mb-4 max-w-md" />
+                  ))}
+                  <RichText text={currentQ?.content?.text || ''} />
+                </div>
+                
+                {currentQ && <QuestionRenderer question={currentQ} />}
+              </div>
+            </CardContent>
+            
+            <CardFooter className="flex flex-wrap items-center justify-between gap-4 p-4 border-t border-slate-200 bg-slate-50 shrink-0">
+              <div className="flex gap-2 w-full lg:w-auto justify-between lg:justify-start">
+                <Button 
+                  variant="outline"
+                  onClick={() => handleSetSubjectIdx(Math.max(0, safeIdx - 1))}
+                  disabled={safeIdx === 0}
+                >
+                  Previous
+                </Button>
+                <Button 
+                  variant={isFlagged ? "default" : "outline"} 
+                  className={isFlagged ? "bg-orange-500 hover:bg-orange-600 text-white" : ""}
+                  onClick={() => dispatch(toggleFlagQuestion(currentQ.id))}
+                >
+                  <Flag className={cn("w-4 h-4 mr-2", isFlagged ? "fill-current" : "")} />
+                  {isFlagged ? 'Flagged' : 'Flag'}
+                </Button>
+              </div>
+
+              <div className="flex gap-2 w-full lg:w-auto justify-between lg:justify-end">
+                {safeIdx < currentSubjectQuestions.length - 1 ? (
+                  <Button onClick={() => handleSetSubjectIdx(safeIdx + 1)}>
+                    Next
+                  </Button>
+                ) : (
+                  <Button onClick={() => {
+                    const currentSubIndex = subjects.findIndex(s => s.id === currentSubjectId);
+                    if (currentSubIndex < subjects.length - 1) {
+                      setCurrentSubjectId(subjects[currentSubIndex + 1].id);
+                    }
+                  }}>
+                    Next Subject
+                  </Button>
+                )}
+                
+                <SubmitButton>Submit Final</SubmitButton>
+              </div>
+            </CardFooter>
+          </Card>
+        </div>
+
+        {/* Right Sidebar: Navigation Grid */}
+        <div className="lg:col-span-3 space-y-6 order-2 lg:order-3">
+          <Card className="h-full flex flex-col bg-slate-50">
+            <CardHeader className="pb-3 border-b flex flex-row items-center justify-between bg-slate-50">
+              <CardTitle className="text-sm font-bold uppercase tracking-wider text-slate-600">Navigation</CardTitle>
+              <span className="text-xs font-medium bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full">
+                {currentSubjectQuestions.filter(q => exam.answers[q.id]).length}/{currentSubjectQuestions.length} Answered
               </span>
             </CardHeader>
-            <CardContent className="flex-1 p-4 bg-white">
-              <div className="grid grid-cols-5 gap-2">
-                {questions.map((q, idx) => {
+            <CardContent className="flex-1 p-4 bg-slate-50 overflow-y-auto max-h-[400px] lg:max-h-[500px]">
+              <div className="grid grid-cols-5 lg:grid-cols-4 gap-2">
+                {currentSubjectQuestions.map((q, idx) => {
                   const isAnswered = !!exam.answers[q.id];
                   const isCurrent = safeIdx === idx;
+                  const isQFlagged = exam.flagged?.[q.id];
+                  
                   return (
                     <button 
-                      key={idx}
+                      key={q.id}
                       aria-label={`Question ${idx + 1}`}
-                      onClick={() => setCurrentIdx(idx)}
+                      onClick={() => handleSetSubjectIdx(idx)}
                       className={cn(
-                        "w-10 h-10 rounded text-sm font-medium flex items-center justify-center transition-colors cursor-pointer border",
-                        isCurrent ? "border-slate-900 bg-white text-slate-900 border-2" :
-                        isAnswered ? "bg-primary text-white hover:bg-primary/90 border-primary" :
-                        "bg-slate-100 text-slate-600 hover:bg-slate-200 border-transparent"
+                        "w-full aspect-square rounded text-sm font-bold flex items-center justify-center transition-all cursor-pointer border-2",
+                        isQFlagged ? "bg-orange-500 text-white shadow-sm" :
+                        isAnswered ? "bg-primary text-white shadow-sm" :
+                        "bg-slate-50 text-slate-500 hover:bg-slate-200",
+                        isCurrent ? "border-slate-900 ring-2 ring-slate-900 ring-offset-1 z-10 scale-[1.05]" :
+                        isQFlagged ? "border-orange-600" :
+                        isAnswered ? "border-primary" :
+                        "border-slate-200"
                       )}
                     >
                       {idx + 1}
@@ -247,61 +385,15 @@ export default function ExamDashboard() {
                 })}
               </div>
             </CardContent>
-            <CardFooter className="border-t bg-slate-50 p-4 flex-col items-start space-y-2 text-xs shrink-0">
-              <div className="flex items-center gap-2"><div className="w-3 h-3 bg-slate-100 border border-slate-200 rounded-sm"></div> Unanswered</div>
-              <div className="flex items-center gap-2"><div className="w-3 h-3 border-2 border-slate-900 bg-white rounded-sm"></div> Current</div>
-              <div className="flex items-center gap-2"><div className="w-3 h-3 bg-primary rounded-sm"></div> Answered</div>
+            <CardFooter className="border-t bg-slate-50 p-4 flex-col items-start space-y-3 text-xs shrink-0 font-medium">
+              <div className="flex items-center gap-2"><div className="w-4 h-4 bg-slate-50 border-2 border-slate-200 rounded-sm"></div> Not Answered</div>
+              <div className="flex items-center gap-2"><div className="w-4 h-4 bg-primary border-2 border-primary rounded-sm"></div> Answered</div>
+              <div className="flex items-center gap-2"><div className="w-4 h-4 bg-orange-500 border-2 border-orange-600 rounded-sm"></div> Flagged</div>
+              <div className="flex items-center gap-2"><div className="w-4 h-4 bg-slate-50 border-2 border-slate-900 ring-2 ring-slate-900 ring-offset-1 rounded-sm scale-[1.05]"></div> Current Question</div>
             </CardFooter>
           </Card>
         </div>
 
-        <div className="md:col-span-3">
-          <Card className="p-0 overflow-hidden flex flex-col min-h-[600px] shadow-sm bg-white">
-            <CardHeader className="flex flex-row justify-between items-center mb-0 border-b p-4 bg-white shrink-0">
-              <CardTitle className="text-lg font-bold text-slate-800">Question {safeIdx + 1} of {questions.length}</CardTitle>
-              <span className="bg-slate-100 text-slate-600 px-3 py-1 rounded-full text-xs font-semibold">{currentQ.subject?.name || 'Subject'}</span>
-            </CardHeader>
-            <CardContent className="p-0 flex-1 flex flex-col md:flex-row relative">
-              {sharedContext && (
-                <div className="md:w-1/2 p-4 md:p-6 border-b md:border-b-0 md:border-r border-slate-200 bg-slate-50 overflow-y-auto max-h-[50vh] md:max-h-[65vh]">
-                  <div className="mb-4">
-                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500 bg-slate-200 px-2 py-1 rounded">Shared Context</span>
-                  </div>
-                  <RichText text={sharedContext} />
-                </div>
-              )}
-              <div className={cn("p-4 md:p-6 overflow-y-auto max-h-[65vh]", sharedContext ? "md:w-1/2" : "w-full")}>
-                <div className="text-slate-800 text-lg leading-relaxed mb-8">
-                  {currentQ.content.assets && currentQ.content.assets.map((asset: any, i: number) => (
-                    asset.type === 'IMAGE' && <img key={i} src={asset.url} alt={asset.alt} className="mb-4 max-w-md" />
-                  ))}
-                  <RichText text={currentQ.content.text || ''} />
-                </div>
-                
-                <QuestionRenderer question={currentQ} />
-                
-              </div>
-            </CardContent>
-            <CardFooter className="flex justify-between p-4 border-t border-slate-200 bg-white shrink-0">
-              <Button 
-                variant="outline"
-                onClick={() => setCurrentIdx(Math.max(0, safeIdx - 1))}
-                disabled={safeIdx === 0}
-              >
-                Previous
-              </Button>
-              {safeIdx < questions.length - 1 ? (
-                <Button 
-                  onClick={() => setCurrentIdx(safeIdx + 1)}
-                >
-                  Next Question
-                </Button>
-              ) : (
-                <SubmitButton>Submit Final</SubmitButton>
-              )}
-            </CardFooter>
-          </Card>
-        </div>
       </main>
     </div>
   );

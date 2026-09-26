@@ -25,7 +25,8 @@ public class ExamSession extends BaseEntity {
 
     private Instant startTime;
     private Instant endTime;
-    private String status;
+    @jakarta.persistence.Enumerated(jakarta.persistence.EnumType.STRING)
+    private ExamSessionStatus status;
     private Integer shuffleSeed;
 
     @Version

@@ -20,13 +20,13 @@ public class QuestionController {
 
     @GetMapping
     public ResponseEntity<ApiResponse<List<Question>>> getQuestionsByStatus(
-            @RequestParam(defaultValue = "DRAFT") String status,
+            @RequestParam(defaultValue = "DRAFT") QuestionStatus status,
             @RequestParam(required = false) UUID subjectId) {
-        return ResponseEntity.ok(ApiResponse.of(questionService.getQuestions(status, subjectId)));
+        return ResponseEntity.ok(ApiResponse.of(questionService.getQuestions(status.name(), subjectId)));
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<ApiResponse<Question>> updateQuestionStatus(@PathVariable UUID id, @RequestBody Question updateRequest) {
+    public ResponseEntity<ApiResponse<Question>> updateQuestionStatus(@PathVariable UUID id, @jakarta.validation.Valid @RequestBody Question updateRequest) {
         try {
             return ResponseEntity.ok(ApiResponse.of(questionService.updateQuestionStatus(id, updateRequest)));
         } catch (IllegalArgumentException e) {
@@ -83,7 +83,7 @@ public class QuestionController {
     }
 
     @PostMapping("/{id}/link")
-    public ResponseEntity<ApiResponse<Question>> linkQuestion(@PathVariable UUID id, @RequestBody ContextLinkRequest req) {
+    public ResponseEntity<ApiResponse<Question>> linkQuestion(@PathVariable UUID id, @jakarta.validation.Valid @RequestBody ContextLinkRequest req) {
         try {
             return ResponseEntity.ok(ApiResponse.of(questionService.linkQuestion(id, req)));
         } catch (IllegalArgumentException e) {

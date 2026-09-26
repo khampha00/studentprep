@@ -50,7 +50,12 @@ export default function Dashboard() {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await axios.post('/api/v1/auth/logout', {}, { withCredentials: true });
+    } catch {
+      // best-effort: proceed even if the server is unreachable
+    }
     localStorage.removeItem('token');
     navigate('/');
   };

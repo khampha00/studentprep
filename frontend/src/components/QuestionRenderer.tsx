@@ -6,6 +6,7 @@ import { RadioGroup, RadioGroupItem } from './ui/radio-group';
 import { Label } from './ui/label';
 import RichText from './RichText';
 import { cn } from '../App';
+import type { ExamQuestion } from '../types/exam';
 
 // Simple predictable PRNG (Mulberry32)
 function mulberry32(a: number) {
@@ -18,7 +19,7 @@ function mulberry32(a: number) {
 }
 
 interface QuestionRendererProps {
-  question: any;
+  question: ExamQuestion;
 }
 
 export default function QuestionRenderer({ question }: QuestionRendererProps) {

@@ -2,7 +2,6 @@ package com.studentprep.student;
 
 import com.studentprep.questionbank.Subject;
 import com.studentprep.questionbank.SubjectRepository;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -11,24 +10,18 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
-import java.io.ByteArrayOutputStream;
 import java.util.stream.Collectors;
-import com.lowagie.text.Document;
-import com.lowagie.text.Paragraph;
-import com.lowagie.text.pdf.PdfWriter;
 
 @Service
-public class StudentService {
+public class CsvStudentImporter {
 
     private final StudentRepository studentRepository;
     private final SubjectRepository subjectRepository;
-    private final PasswordEncoder passwordEncoder;
     private final UserRepository userRepository;
 
-    public StudentService(StudentRepository studentRepository, SubjectRepository subjectRepository, PasswordEncoder passwordEncoder, UserRepository userRepository) {
+    public CsvStudentImporter(StudentRepository studentRepository, SubjectRepository subjectRepository, UserRepository userRepository) {
         this.studentRepository = studentRepository;
         this.subjectRepository = subjectRepository;
-        this.passwordEncoder = passwordEncoder;
         this.userRepository = userRepository;
     }
 
@@ -36,7 +29,6 @@ public class StudentService {
         String cleanName = name.trim();
         if (cleanName.isEmpty()) return null;
 
-        // 1. Direct match
         Optional<Subject> exact = subjectRepository.findByName(cleanName);
         if (exact.isPresent()) {
             return exact.get();
@@ -44,14 +36,12 @@ public class StudentService {
 
         List<Subject> allSubjects = subjectRepository.findAll();
 
-        // 2. Case-insensitive match
         for (Subject s : allSubjects) {
             if (s.getName().equalsIgnoreCase(cleanName)) {
                 return s;
             }
         }
 
-        // 3. Normalized alias matching (English Language / Use of English, Mathematics / Maths)
         String normalized = cleanName.toUpperCase().replaceAll("[_\\- ]+", " ").trim();
         if (normalized.equals("ENGLISH") || normalized.equals("USE OF ENGLISH") || normalized.equals("ENGLISH LANGUAGE")) {
             for (Subject s : allSubjects) {
@@ -70,7 +60,6 @@ public class StudentService {
             }
         }
 
-        // 4. Auto-provision new subject in standard uppercase format
         Subject newSubject = new Subject();
         newSubject.setName(cleanName.toUpperCase());
         return subjectRepository.save(newSubject);
@@ -80,13 +69,14 @@ public class StudentService {
     public Map<String, Object> processBulkCsv(MultipartFile csvFile) {
         int created = 0;
         List<String> errors = new ArrayList<>();
-        String defaultPinHash = passwordEncoder.encode("12345");
+        List<Map<String, String>> credentials = new ArrayList<>();
+        java.security.SecureRandom secureRandom = new java.security.SecureRandom();
 
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(csvFile.getInputStream(), StandardCharsets.UTF_8))) {
             String line;
             boolean firstLine = true;
             while ((line = reader.readLine()) != null) {
-                if (firstLine) { // Skip header
+                if (firstLine) { 
                     firstLine = false;
                     continue;
                 }
@@ -122,7 +112,9 @@ public class StudentService {
                     student.setState(state);
                     student.setExamCenter(center);
                     student.setSubjects(subjects);
-                    student.setPinHash(defaultPinHash);
+
+                    String rawPin = String.valueOf(10000 + secureRandom.nextInt(90000));
+                    student.setPin(rawPin);
 
                     String regNum;
                     do {
@@ -132,14 +124,14 @@ public class StudentService {
                     student.setRegistrationNumber(regNum);
                     studentRepository.save(student);
 
-                    // Sync student credential to users table for login and exam_sessions foreign key
                     User user = new User();
                     user.setId(studentId);
                     user.setIdentifier(regNum);
-                    user.setPinHash(defaultPinHash);
+                    user.setPin(rawPin);
                     user.setRole("ROLE_STUDENT");
                     userRepository.save(user);
 
+                    credentials.add(Map.of("registrationNumber", regNum, "pin", rawPin));
                     created++;
                 } catch (Exception e) {
                     errors.add("Error processing line '" + line + "': " + e.getMessage());
@@ -152,6 +144,7 @@ public class StudentService {
         Map<String, Object> result = new HashMap<>();
         result.put("created", created);
         result.put("errors", errors);
+        result.put("credentials", credentials);
         return result;
     }
 
@@ -166,53 +159,6 @@ public class StudentService {
     }
 
     @Transactional(readOnly = true)
-    public Map<String, Object> getRegistrationSlip(UUID id) {
-        Student student = studentRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Student not found"));
-        
-        Map<String, Object> details = new HashMap<>();
-        details.put("name", student.getName());
-        details.put("registrationNumber", student.getRegistrationNumber());
-        details.put("pin", "12345");
-        details.put("examCenter", student.getExamCenter());
-        details.put("state", student.getState());
-        details.put("subjects", student.getSubjects().stream().map(Subject::getName).toList());
-        
-        return details;
-    }
-    @Transactional(readOnly = true)
-    public byte[] getRegistrationSlipPdf(UUID id) {
-        Student student = studentRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Student not found"));
-
-        try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
-            Document document = new Document();
-            PdfWriter.getInstance(document, baos);
-            document.open();
-            
-            document.add(new Paragraph("JAMB CBT Registration & Examination Slip"));
-            document.add(new Paragraph("=================================================="));
-            document.add(new Paragraph("Candidate Name: " + student.getName()));
-            document.add(new Paragraph("Registration Number: " + student.getRegistrationNumber()));
-            document.add(new Paragraph("Login PIN: 12345"));
-            document.add(new Paragraph("State: " + student.getState()));
-            document.add(new Paragraph("Exam Center: " + (student.getExamCenter() != null ? student.getExamCenter() : "Main Center")));
-            
-            String subjects = student.getSubjects().stream()
-                .map(Subject::getName)
-                .collect(Collectors.joining(", "));
-            document.add(new Paragraph("Registered Subjects: " + (subjects.isEmpty() ? "None" : subjects)));
-            document.add(new Paragraph("=================================================="));
-            document.add(new Paragraph("Important: Use your Registration Number and Login PIN to log in on exam day."));
-            
-            document.close();
-            return baos.toByteArray();
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to generate PDF slip", e);
-        }
-    }
-
-    @Transactional(readOnly = true)
     public byte[] exportStudentsCsv() {
         List<Student> allStudents = studentRepository.findAll();
         StringBuilder sb = new StringBuilder();
@@ -221,7 +167,7 @@ public class StudentService {
             String subjects = s.getSubjects().stream().map(Subject::getName).collect(Collectors.joining("; "));
             sb.append("\"").append(s.getName() != null ? s.getName().replace("\"", "\"\"") : "").append("\",")
               .append("\"").append(s.getRegistrationNumber()).append("\",")
-              .append("\"12345\",")
+              .append("\"").append(s.getPin()).append("\",")
               .append("\"").append(s.getState() != null ? s.getState().replace("\"", "\"\"") : "").append("\",")
               .append("\"").append(s.getExamCenter() != null ? s.getExamCenter().replace("\"", "\"\"") : "").append("\",")
               .append("\"").append(subjects.replace("\"", "\"\"")).append("\"\n");

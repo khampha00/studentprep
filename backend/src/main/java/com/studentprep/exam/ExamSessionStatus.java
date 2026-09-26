@@ -3,5 +3,8 @@ package com.studentprep.exam;
 public enum ExamSessionStatus {
     IN_PROGRESS,
     SUBMITTED,
-    LATE_SUBMISSION_FLAGGED;
+    LATE_SUBMISSION_FLAGGED,
+    FLAGGED_TAB_SWITCH,
+    NORMAL,
+    TIME_EXPIRED;
 }

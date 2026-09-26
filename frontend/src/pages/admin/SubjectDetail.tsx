@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '../../comp
 import { toast } from 'sonner';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { MathText } from '../../components/ui/MathText';
+import type { ExamQuestion, QuestionSubject } from '../../types/exam';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -23,15 +24,15 @@ import { Trash2 } from 'lucide-react';
 export default function SubjectDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [subject, setSubject] = useState<any>(null);
+  const [subject, setSubject] = useState<QuestionSubject | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [uploadingJobId, setUploadingJobId] = useState<string | null>(null);
   const [jobProcessedChunks, setJobProcessedChunks] = useState(0);
   const [jobTotalChunks, setJobTotalChunks] = useState(0);
 
   const [activeTab, setActiveTab] = useState<'DRAFTS' | 'ACTIVE'>('ACTIVE');
-  const [activeQuestions, setActiveQuestions] = useState<any[]>([]);
-  const [draftQuestions, setDraftQuestions] = useState<any[]>([]);
+  const [activeQuestions, setActiveQuestions] = useState<ExamQuestion[]>([]);
+  const [draftQuestions, setDraftQuestions] = useState<ExamQuestion[]>([]);
 
   useEffect(() => {
     if (id) {
@@ -124,7 +125,7 @@ export default function SubjectDetail() {
     }
   };
 
-  const handleApprove = async (finalQ: any) => {
+  const handleApprove = async (finalQ: ExamQuestion) => {
     try {
       const updated = { ...finalQ, status: 'ACTIVE' };
       await axios.put('/api/v1/admin/questions/' + finalQ.id, updated);
@@ -136,7 +137,7 @@ export default function SubjectDetail() {
     }
   };
 
-  const handleReject = async (q: any) => {
+  const handleReject = async (q: ExamQuestion) => {
     try {
       await axios.delete('/api/v1/admin/questions/' + q.id);
       setDraftQuestions(prev => prev.filter(x => x.id !== q.id));
@@ -209,7 +210,7 @@ export default function SubjectDetail() {
     }
   };
 
-  const handleUpdateDraft = (updatedQ: any) => {
+  const handleUpdateDraft = (updatedQ: ExamQuestion) => {
     setDraftQuestions(prev => prev.map(dq => dq.id === updatedQ.id ? updatedQ : dq));
   };
 
@@ -223,22 +224,13 @@ export default function SubjectDetail() {
     }
   };
 
-  const handleLinkQuestion = async (questionId: string, contextId: string | null, newPassage: string) => {
-    try {
-      await axios.post(`/api/v1/admin/questions/${questionId}/link`, { contextId, newPassage });
-      await fetchDraftQuestions();
-      toast.success('Question linked successfully');
-    } catch (e) {
-      toast.error('Failed to link question');
-    }
-  };
 
 
-  const groupQuestions = (questions: any[]) => {
-    const groups: any[] = [];
+  const groupQuestions = (questions: ExamQuestion[]) => {
+    const groups: { contextId: string | null, passage: string | null, questions: ExamQuestion[] }[] = [];
     questions.forEach((q) => {
         if (q.context) {
-            let group = groups.find(g => g.contextId === q.context.id);
+            let group = groups.find(g => g.contextId === q.context!.id);
             if (!group) {
                 group = { contextId: q.context.id, passage: q.context.passage, questions: [] };
                 groups.push(group);
@@ -413,7 +405,7 @@ export default function SubjectDetail() {
                         <div key={group.contextId} className="col-span-2 border-2 border-slate-300 rounded-xl p-4 bg-slate-50/50 space-y-4">
                           <div className="p-4 bg-white border border-slate-200 rounded-md shadow-sm">
                             <h4 className="font-bold text-slate-800 mb-2 uppercase tracking-wider text-xs">Shared Context</h4>
-                            <div className="prose prose-slate max-w-none text-sm"><MathText content={group.passage} /></div>
+                            <div className="prose prose-slate max-w-none text-sm"><MathText content={group.passage || ''} /></div>
                           </div>
                           <div className="grid grid-cols-2 gap-4">
                             {group.questions.map((q: any) => (
@@ -423,13 +415,15 @@ export default function SubjectDetail() {
                         <CardTitle className="text-lg text-[#008751]">Question {q.content?.questionNumber ? '#' + q.content.questionNumber : 'ID: ' + q.id.substring(0, 8)}</CardTitle>
                       </CardHeader>
                       <CardContent className="flex-1 text-sm text-slate-700">
-                        {q.content?.assets?.map((asset: string, i: number) => (
+                        {q.content?.assets?.map((asset: any, i: number) => {
+                          const assetUrl = typeof asset === 'string' ? asset : asset.url;
+                          return (
                           <div key={i} className="mb-4 text-center">
-                            <img src={asset} alt="Diagram" className="max-w-full max-h-[300px] object-contain mx-auto rounded border border-slate-200" />
+                            <img src={assetUrl} alt="Diagram" className="max-w-full max-h-[300px] object-contain mx-auto rounded border border-slate-200" />
                           </div>
-                        ))}
+                        )})}
                         <div className="font-medium mb-4">
-                          <MathText content={q.content?.text || q.content?.passage || "No text available"} />
+                          <MathText content={q.content?.text || "No text available"} />
                         </div>
                         <div className="space-y-2 mt-4 p-4 bg-slate-50 rounded-md">
                           {Object.entries(q.content?.options || {}).map(([k, v]) => (
@@ -491,13 +485,15 @@ export default function SubjectDetail() {
                         <CardTitle className="text-lg text-[#008751]">Question {q.content?.questionNumber ? '#' + q.content.questionNumber : 'ID: ' + q.id.substring(0, 8)}</CardTitle>
                       </CardHeader>
                       <CardContent className="flex-1 text-sm text-slate-700">
-                        {q.content?.assets?.map((asset: string, i: number) => (
+                        {q.content?.assets?.map((asset: any, i: number) => {
+                          const assetUrl = typeof asset === 'string' ? asset : asset.url;
+                          return (
                           <div key={i} className="mb-4 text-center">
-                            <img src={asset} alt="Diagram" className="max-w-full max-h-[300px] object-contain mx-auto rounded border border-slate-200" />
+                            <img src={assetUrl} alt="Diagram" className="max-w-full max-h-[300px] object-contain mx-auto rounded border border-slate-200" />
                           </div>
-                        ))}
+                        )})}
                         <div className="font-medium mb-4">
-                          <MathText content={q.content?.text || q.content?.passage || "No text available"} />
+                          <MathText content={q.content?.text || "No text available"} />
                         </div>
                         <div className="space-y-2 mt-4 p-4 bg-slate-50 rounded-md">
                           {Object.entries(q.content?.options || {}).map(([k, v]) => (
@@ -565,7 +561,7 @@ export default function SubjectDetail() {
                         <div key={group.contextId} className="col-span-2 border-2 border-slate-300 rounded-xl p-4 bg-slate-50/50 space-y-4">
                           <div className="p-4 bg-white border border-slate-200 rounded-md shadow-sm">
                             <h4 className="font-bold text-slate-800 mb-2 uppercase tracking-wider text-xs">Shared Context</h4>
-                            <div className="prose prose-slate max-w-none text-sm"><MathText content={group.passage} /></div>
+                            <div className="prose prose-slate max-w-none text-sm"><MathText content={group.passage || ''} /></div>
                           </div>
                           <div className="grid grid-cols-2 gap-4">
                             {group.questions.map((q: any) => {
@@ -584,10 +580,10 @@ export default function SubjectDetail() {
                             )})}
                           </div>
                           <div className="flex justify-end pt-2 border-t border-slate-200 mt-4 gap-3">
-                            <Button variant="outline" className="text-amber-600 border-amber-200 hover:bg-amber-50" onClick={() => handleUngroupContext(group.contextId)}>
+                            <Button variant="outline" className="text-amber-600 border-amber-200 hover:bg-amber-50" onClick={() => handleUngroupContext(group.contextId!)}>
                               Ungroup All
                             </Button>
-                            <Button className="bg-[#008751]" onClick={() => handleApproveContext(group.contextId)}>
+                            <Button className="bg-[#008751]" onClick={() => handleApproveContext(group.contextId!)}>
                               Approve Entire Group
                             </Button>
                           </div>
@@ -597,9 +593,6 @@ export default function SubjectDetail() {
                       const q = group.questions[0];
                       const globalIdx = draftQuestions.findIndex(dq => dq.id === q.id);
                       
-                      // Find all unique available contexts to link to
-                      const availableContexts = Array.from(new Map(draftQuestions.filter(x => x.context).map(x => [x.context.id, x.context])).values());
-                      
                       return (
                         <DraftQuestionCard
                           key={q.id}
@@ -607,10 +600,8 @@ export default function SubjectDetail() {
                           idx={globalIdx}
                           onApprove={handleApprove}
                           onReject={handleReject}
-                          onLink={handleLinkQuestion}
                           onUpdate={handleUpdateDraft}
                           isGrouped={false}
-                          availableContexts={availableContexts}
                         />
                       );
                     }
@@ -626,16 +617,12 @@ export default function SubjectDetail() {
 }
 
 // Local component to manage edit state and prevent parent re-renders on keystrokes
-function DraftQuestionCard({ initialQuestion, idx, onApprove, onReject, onUngroup, onLink, onUpdate, availableContexts, isGrouped }: { initialQuestion: any, idx: number, onApprove: ((q: any) => void) | undefined, onReject: (q: any) => void, onUngroup?: (id: string) => void, onLink?: (id: string, ctxId: string | null, passage: string) => void, onUpdate?: (q: any) => void, availableContexts?: any[], isGrouped?: boolean }) {
-  const [q, setQ] = useState(initialQuestion);
+function DraftQuestionCard({ initialQuestion, idx, onApprove, onReject, onUngroup, onUpdate, isGrouped }: { initialQuestion: ExamQuestion, idx: number, onApprove: ((q: ExamQuestion) => void) | undefined, onReject: (q: ExamQuestion) => void, onUngroup?: (id: string) => void, onUpdate?: (q: ExamQuestion) => void, isGrouped?: boolean }) {
+  const [q, setQ] = useState<ExamQuestion>(initialQuestion);
   const [isEditing, setIsEditing] = useState(false);
-  const [backup, setBackup] = useState<any>(null);
-  const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
-  const [linkTab, setLinkTab] = useState<'EXISTING' | 'NEW'>('EXISTING');
-  const [selectedContextId, setSelectedContextId] = useState<string>('');
-  const [newPassageText, setNewPassageText] = useState('');
+  const [backup, setBackup] = useState<ExamQuestion | null>(null);
 
-  const saveDraft = async (updatedQ: any) => {
+  const saveDraft = async (updatedQ: ExamQuestion) => {
     try {
       await axios.put(`/api/v1/admin/questions/${updatedQ.id}`, updatedQ);
       if (onUpdate) onUpdate(updatedQ);
@@ -652,7 +639,7 @@ function DraftQuestionCard({ initialQuestion, idx, onApprove, onReject, onUngrou
     try {
       const res = await axios.post('/api/v1/admin/ingestion/assets', formData);
       const url = res.data.data.url;
-      setQ((prev: any) => {
+      setQ((prev) => {
         const updated = { ...prev, content: { ...prev.content } };
         if (!updated.content.assets) updated.content.assets = [];
         updated.content.assets.push(url);
@@ -677,17 +664,19 @@ function DraftQuestionCard({ initialQuestion, idx, onApprove, onReject, onUngrou
     <Card>
       <CardHeader><CardTitle className="text-lg">Draft #{initialQuestion.content?.questionNumber || idx + 1}</CardTitle></CardHeader>
       <CardContent>
-        {q.content?.assets?.map((asset: string, i: number) => (
+        {q.content?.assets?.map((asset: any, i: number) => {
+          const assetUrl = typeof asset === 'string' ? asset : asset.url;
+          return (
           <div key={i} className="relative inline-block my-2 group w-full text-center">
-            <img src={asset} alt="Diagram" className="max-w-full max-h-[300px] object-contain mx-auto rounded border border-slate-200" />
+            <img src={assetUrl} alt="Diagram" className="max-w-full max-h-[300px] object-contain mx-auto rounded border border-slate-200" />
             <Button
               variant="destructive"
               size="icon"
               className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity h-8 w-8 rounded-full shadow-md z-10"
               onClick={() => {
-                setQ((prev: any) => {
+                setQ((prev) => {
                   const updated = { ...prev, content: { ...prev.content } };
-                  updated.content.assets = updated.content.assets.filter((_: any, idxAsset: number) => idxAsset !== i);
+                  updated.content.assets = updated.content.assets!.filter((_: any, idxAsset: number) => idxAsset !== i);
                   saveDraft(updated);
                   return updated;
                 });
@@ -697,7 +686,7 @@ function DraftQuestionCard({ initialQuestion, idx, onApprove, onReject, onUngrou
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
             </Button>
           </div>
-        ))}
+        )})}
 
         <div className="mt-2 mb-4 text-center">
           <label className="cursor-pointer text-sm font-medium text-green-600 hover:text-black bg-green-50 px-3 py-1.5 rounded border border-green-200 transition-colors">
@@ -773,7 +762,7 @@ function DraftQuestionCard({ initialQuestion, idx, onApprove, onReject, onUngrou
         {isEditing ? (
           <>
             <Button variant="outline" onClick={() => {
-              setQ(backup);
+              if (backup) setQ(backup);
               setIsEditing(false);
               setBackup(null);
             }}>Cancel</Button>
@@ -816,73 +805,10 @@ function DraftQuestionCard({ initialQuestion, idx, onApprove, onReject, onUngrou
           </Button>
         )}
 
-        {!isGrouped && onLink && (
-          <Button variant="outline" className="text-blue-600 border-blue-200 hover:bg-blue-50" onClick={() => setIsLinkModalOpen(true)}>
-            Link to Passage
-          </Button>
-        )}
-
         {onApprove && (
           <Button className="bg-[#008751]" onClick={attemptApprove}>Approve</Button>
         )}
       </CardFooter>
-
-      {/* Link Modal */}
-      {!isGrouped && onLink && (
-        <AlertDialog open={isLinkModalOpen} onOpenChange={setIsLinkModalOpen}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Link Question to Shared Context</AlertDialogTitle>
-            </AlertDialogHeader>
-            <div className="flex gap-4 mb-4 border-b pb-2">
-              <button className={`font-semibold ${linkTab === 'EXISTING' ? 'text-[#008751]' : 'text-slate-500'}`} onClick={() => setLinkTab('EXISTING')}>Existing Context</button>
-              <button className={`font-semibold ${linkTab === 'NEW' ? 'text-[#008751]' : 'text-slate-500'}`} onClick={() => setLinkTab('NEW')}>Create New</button>
-            </div>
-            
-            {linkTab === 'EXISTING' ? (
-              <div className="space-y-2">
-                <p className="text-sm text-slate-600 mb-2">Select a reading passage to attach this question to:</p>
-                <Select value={selectedContextId} onValueChange={(val) => setSelectedContextId(val || '')}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="-- Select Passage --" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {availableContexts?.map((ctx: any) => (
-                      <SelectItem key={ctx.id} value={ctx.id}>
-                        {ctx.passage.substring(0, 60)}...
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <p className="text-sm text-slate-600 mb-2">Paste the text of the new reading passage here:</p>
-                <textarea 
-                  className="w-full h-32 p-3 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#008751]"
-                  value={newPassageText}
-                  onChange={e => setNewPassageText(e.target.value)}
-                  placeholder="e.g. Read the following passage carefully..."
-                />
-              </div>
-            )}
-            
-            <AlertDialogFooter className="mt-4">
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <Button 
-                className="bg-[#008751]" 
-                disabled={(linkTab === 'EXISTING' && !selectedContextId) || (linkTab === 'NEW' && !newPassageText.trim())}
-                onClick={() => {
-                  onLink(q.id, linkTab === 'EXISTING' ? selectedContextId : null, linkTab === 'NEW' ? newPassageText : '');
-                  setIsLinkModalOpen(false);
-                }}
-              >
-                Link
-              </Button>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      )}
     </Card>
   );
 }

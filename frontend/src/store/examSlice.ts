@@ -9,6 +9,8 @@ export interface ExamState {
   questions: ExamQuestion[];
   contexts: Record<string, string>;
   answers: Record<string, string>;
+  flagged: Record<string, boolean>;
+  student: { name: string; registrationNumber: string; examCenter: string } | null;
   timeLeft: number;
   lastUpdated: number;
   syncStatus: 'idle' | 'syncing' | 'error' | 'synced';
@@ -24,6 +26,8 @@ const initialState: ExamState = {
   questions: [],
   contexts: {},
   answers: {},
+  flagged: {},
+  student: null,
   timeLeft: 7200, // 2 hours
   lastUpdated: 0,
   syncStatus: 'idle',
@@ -56,6 +60,9 @@ export const initializeExam = createAsyncThunk(
            if (serverStatePayload?.tabSwitchCount != null && serverStatePayload.tabSwitchCount > (localState.tabSwitchCount || 0)) {
               localState.tabSwitchCount = serverStatePayload.tabSwitchCount;
            }
+           if (!localState.flagged) {
+               localState.flagged = {};
+           }
            await db.examStates.put(localState);
            return localState; // Offline-first / Rehydration
         } else {
@@ -66,6 +73,7 @@ export const initializeExam = createAsyncThunk(
                id: realSessionId,
                shuffleSeed: serverSeed,
                answers: initialAnswers,
+               flagged: {},
                lastUpdated: Date.now(),
                timeLeft: initialTimeLeft,
                tabSwitchCount: initialTabSwitches,
@@ -75,6 +83,13 @@ export const initializeExam = createAsyncThunk(
            return newState;
         }
     } catch (e: any) {
+        if (!localState) {
+            // Try to find the most recent exam session if offline
+            const recentStates = await db.examStates.orderBy('lastUpdated').reverse().limit(1).toArray();
+            if (recentStates.length > 0) {
+                localState = recentStates[0];
+            }
+        }
         if (localState) return localState;
         if (!navigator.onLine) {
             throw new Error("Cannot start exam while offline with no local cache.");
@@ -140,7 +155,8 @@ export const fetchExamPayload = createAsyncThunk(
         const response = await axios.get('/api/v1/exams/active/payload');
         return {
             questions: response.data.data.questions,
-            contexts: response.data.data.contexts || {}
+            contexts: response.data.data.contexts || {},
+            student: response.data.data.student || null
         };
     }
 );
@@ -170,6 +186,14 @@ const examSlice = createSlice({
     },
     acknowledgeWarning: (state) => {
       state.showWarningModal = false;
+    },
+    toggleFlagQuestion: (state, action: PayloadAction<string>) => {
+      const qId = action.payload;
+      if (state.flagged[qId]) {
+        delete state.flagged[qId];
+      } else {
+        state.flagged[qId] = true;
+      }
     }
   },
   extraReducers: (builder) => {
@@ -178,6 +202,7 @@ const examSlice = createSlice({
           state.sessionId = payload.id;
           state.shuffleSeed = payload.shuffleSeed;
           state.answers = payload.answers || {};
+          state.flagged = payload.flagged || {};
           state.timeLeft = payload.timeLeft;
           state.lastUpdated = payload.lastUpdated;
           state.tabSwitchCount = payload.tabSwitchCount || 0;
@@ -186,6 +211,7 @@ const examSlice = createSlice({
       builder.addCase(fetchExamPayload.fulfilled, (state, action) => {
           state.questions = action.payload.questions;
           state.contexts = action.payload.contexts;
+          state.student = action.payload.student;
       });
       builder.addCase(fetchExamPayload.rejected, (state, action) => {
           state.payloadError = action.error.message || 'Failed to load exam questions';
@@ -243,5 +269,5 @@ export const hydrateFromServer = createAsyncThunk(
     }
 );
 
-export const { answerQuestion, tickTimer, recordViolation, acknowledgeWarning } = examSlice.actions;
+export const { answerQuestion, tickTimer, recordViolation, acknowledgeWarning, toggleFlagQuestion } = examSlice.actions;
 export default examSlice.reducer;

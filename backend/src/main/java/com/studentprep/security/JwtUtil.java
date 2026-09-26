@@ -56,6 +56,19 @@ public class JwtUtil {
         return getClaims(token).getSubject();
     }
 
+    /**
+     * Extracts the subject (identifier) from a JWT without enforcing expiry.
+     * This is used by the logout endpoint so that an already-expired access token
+     * can still be used to identify and delete the Redis session key.
+     */
+    public String extractIdentifierAllowExpired(String token) {
+        try {
+            return getClaims(token).getSubject();
+        } catch (ExpiredJwtException e) {
+            return e.getClaims().getSubject();
+        }
+    }
+
     public String extractRole(String token) {
         return getClaims(token).get("role", String.class);
     }

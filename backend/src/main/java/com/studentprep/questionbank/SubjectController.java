@@ -33,7 +33,7 @@ public class SubjectController {
     }
 
     @PostMapping("/admin/subjects")
-    public ResponseEntity<ApiResponse<Subject>> createSubject(@RequestBody Subject subject) {
+    public ResponseEntity<ApiResponse<Subject>> createSubject(@jakarta.validation.Valid @RequestBody Subject subject) {
         if (subject.getName() == null || subject.getName().trim().isEmpty()) {
             return ResponseEntity.badRequest().build();
         }
@@ -49,7 +49,7 @@ public class SubjectController {
     }
 
     @PutMapping("/admin/subjects/{id}")
-    public ResponseEntity<ApiResponse<Subject>> updateSubject(@PathVariable UUID id, @RequestBody Subject updatedSubject) {
+    public ResponseEntity<ApiResponse<Subject>> updateSubject(@PathVariable UUID id, @jakarta.validation.Valid @RequestBody Subject updatedSubject) {
         if (updatedSubject.getName() == null || updatedSubject.getName().trim().isEmpty()) {
             return ResponseEntity.badRequest().build();
         }
@@ -67,7 +67,7 @@ public class SubjectController {
             return ResponseEntity.notFound().build();
         }
 
-        if (questionRepository.existsBySubjectId(id)) {
+        if (questionRepository.existsBySubject_Id(id)) {
             return ResponseEntity.badRequest().build(); // or use a specific error response
         }
 

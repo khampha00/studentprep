@@ -23,14 +23,45 @@ import jakarta.persistence.FetchType;
 public class Question extends BaseEntity {
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "subject_id")
+    @JsonIgnore
     private Subject subject;
 
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "context_id")
+    @JsonIgnore
     private QuestionContext context;
 
+    @jakarta.persistence.Transient
+    private java.util.UUID transientSubjectId;
+
+    @jakarta.persistence.Transient
+    private java.util.UUID transientContextId;
+
+    @com.fasterxml.jackson.annotation.JsonProperty("subjectId")
+    public java.util.UUID getSubjectId() {
+        if (subject != null) return subject.getId();
+        return transientSubjectId;
+    }
+
+    @com.fasterxml.jackson.annotation.JsonProperty("subjectId")
+    public void setSubjectId(java.util.UUID subjectId) {
+        this.transientSubjectId = subjectId;
+    }
+
+    @com.fasterxml.jackson.annotation.JsonProperty("contextId")
+    public java.util.UUID getContextId() {
+        if (context != null) return context.getId();
+        return transientContextId;
+    }
+
+    @com.fasterxml.jackson.annotation.JsonProperty("contextId")
+    public void setContextId(java.util.UUID contextId) {
+        this.transientContextId = contextId;
+    }
+
     private String topic;
-    private String status;
+    @jakarta.persistence.Enumerated(jakarta.persistence.EnumType.STRING)
+    private QuestionStatus status;
 
     @Type(JsonType.class)
     @Column(columnDefinition = "jsonb")

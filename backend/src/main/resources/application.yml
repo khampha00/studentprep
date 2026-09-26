@@ -43,3 +43,6 @@ server:
     # Enables RFC 7807 Problem Details
     include-message: always
     include-binding-errors: always
+
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:3000}

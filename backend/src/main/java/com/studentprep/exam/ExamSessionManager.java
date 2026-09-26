@@ -1,14 +1,9 @@
 package com.studentprep.exam;
 
+import com.studentprep.exam.dto.ExamPayloadResponse;
 import com.studentprep.exam.dto.ExamStartResponse;
 import com.studentprep.exam.dto.ExamSyncRequest;
-import com.studentprep.exam.dto.ExamPayloadResponse;
-import com.studentprep.questionbank.QuestionInternalAPI;
-import com.studentprep.questionbank.Question;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.core.type.TypeReference;
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -16,42 +11,29 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
-import java.util.List;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Random;
 import java.util.concurrent.ThreadLocalRandom;
 
 @Service
-public class ExamService {
+public class ExamSessionManager {
 
     private final ExamSessionRepository sessionRepository;
-    private final QuestionInternalAPI questionAPI;
-    private final RedisTemplate<String, Object> redisTemplate;
+    private final ExamPayloadGenerator payloadGenerator;
     private final ApplicationEventPublisher eventPublisher;
-    private final ObjectMapper objectMapper;
-    private final com.studentprep.student.StudentRepository studentRepository;
-    
-    private static final String REDIS_EXAM_PAYLOAD_KEY = "exam:payload:active";
-    private static final int EXAM_DURATION_MINUTES = 120; // 2 hours
+
+    private static final int EXAM_DURATION_MINUTES = 120;
     private static final int LATE_SUBMISSION_GRACE_SECONDS = 10;
 
-    public ExamService(ExamSessionRepository sessionRepository, QuestionInternalAPI questionAPI,
-                       RedisTemplate<String, Object> redisTemplate, ApplicationEventPublisher eventPublisher,
-                       ObjectMapper objectMapper, com.studentprep.student.StudentRepository studentRepository) {
+    public ExamSessionManager(ExamSessionRepository sessionRepository, ExamPayloadGenerator payloadGenerator, ApplicationEventPublisher eventPublisher) {
         this.sessionRepository = sessionRepository;
-        this.questionAPI = questionAPI;
-        this.redisTemplate = redisTemplate;
+        this.payloadGenerator = payloadGenerator;
         this.eventPublisher = eventPublisher;
-        this.objectMapper = objectMapper;
-        this.studentRepository = studentRepository;
     }
 
     @Transactional(noRollbackFor = org.springframework.web.server.ResponseStatusException.class)
     public ExamStartResponse startExam(UUID userId) {
-        // Block students who were previously flagged for malpractice
-        if (sessionRepository.existsByUserIdAndStatus(userId, "FLAGGED_TAB_SWITCH")) {
+        if (sessionRepository.existsByUserIdAndStatus(userId, ExamSessionStatus.FLAGGED_TAB_SWITCH)) {
             throw new org.springframework.web.server.ResponseStatusException(
                     org.springframework.http.HttpStatus.FORBIDDEN,
                     "Your account has been blocked due to exam malpractice. You cannot start an exam."
@@ -59,21 +41,18 @@ public class ExamService {
         }
 
         Instant now = Instant.now();
-
-        // Check for existing IN_PROGRESS session.
-        // If an active session already exists, resume it instead of abandoning it!
-        java.util.Optional<ExamSession> existingSession = sessionRepository.findByUserIdAndStatus(userId, "IN_PROGRESS");
+        Optional<ExamSession> existingSession = sessionRepository.findByUserIdAndStatus(userId, ExamSessionStatus.IN_PROGRESS);
         if (existingSession.isPresent()) {
             return resumeExistingSession(existingSession.get(), userId, now);
         }
 
-        ExamPayloadResponse payload = getActivePayload(userId);
+        ExamPayloadResponse payload = payloadGenerator.getActivePayload(userId);
         int shuffleSeed = ThreadLocalRandom.current().nextInt(1000, 9999);
 
         ExamSession session = new ExamSession();
         session.setUserId(userId);
         session.setStartTime(now);
-        session.setStatus("IN_PROGRESS");
+        session.setStatus(ExamSessionStatus.IN_PROGRESS);
         session.setShuffleSeed(shuffleSeed);
 
         Map<String, Object> initialState = new HashMap<>();
@@ -85,8 +64,7 @@ public class ExamService {
         try {
             session = sessionRepository.save(session);
         } catch (org.springframework.dao.DataIntegrityViolationException ex) {
-            // Concurrent start race condition: resume the session that won the race
-            java.util.Optional<ExamSession> concurrent = sessionRepository.findByUserIdAndStatus(userId, "IN_PROGRESS");
+            Optional<ExamSession> concurrent = sessionRepository.findByUserIdAndStatus(userId, ExamSessionStatus.IN_PROGRESS);
             if (concurrent.isPresent()) {
                 return resumeExistingSession(concurrent.get(), userId, now);
             }
@@ -108,16 +86,14 @@ public class ExamService {
     private ExamStartResponse resumeExistingSession(ExamSession existing, UUID userId, Instant now) {
         Instant expectedEndTime = existing.getStartTime().plus(EXAM_DURATION_MINUTES, ChronoUnit.MINUTES);
 
-        // If time has completely expired including grace period, finalize session
         if (now.isAfter(expectedEndTime.plus(LATE_SUBMISSION_GRACE_SECONDS, ChronoUnit.SECONDS))) {
-            finalizeExamSession(existing, "TIME_EXPIRED");
+            finalizeExamSession(existing, ExamSessionStatus.TIME_EXPIRED);
             throw new org.springframework.web.server.ResponseStatusException(
                     org.springframework.http.HttpStatus.BAD_REQUEST,
                     "Your exam duration has expired. Session has been submitted."
             );
         }
 
-        // Resume active session
         long elapsedSeconds = ChronoUnit.SECONDS.between(existing.getStartTime(), now);
         int remainingSeconds = (int) Math.max(0, (EXAM_DURATION_MINUTES * 60) - elapsedSeconds);
 
@@ -138,7 +114,7 @@ public class ExamService {
         existing.setStatePayload(statePayload);
         sessionRepository.save(existing);
 
-        ExamPayloadResponse payload = getActivePayload(userId);
+        ExamPayloadResponse payload = payloadGenerator.getActivePayload(userId);
         Map<String, Object> payloadMap = new HashMap<>();
         payloadMap.put("questions", payload.getQuestions());
         payloadMap.put("contexts", payload.getContexts());
@@ -152,11 +128,9 @@ public class ExamService {
         return new ExamStartResponse(existing.getId(), shuffleSeed, payloadMap, statePayload, true);
     }
 
-
-
     private ExamSession resolveSession(UUID sessionId, UUID studentId) {
         if (sessionId != null) {
-            java.util.Optional<ExamSession> sessionOpt = sessionRepository.findById(sessionId);
+            Optional<ExamSession> sessionOpt = sessionRepository.findById(sessionId);
             if (sessionOpt.isPresent()) {
                 ExamSession s = sessionOpt.get();
                 if (!s.getUserId().equals(studentId)) {
@@ -165,21 +139,21 @@ public class ExamService {
                 return s;
             }
         }
-        // Fallback: look up active session for this student
-        return sessionRepository.findByUserIdAndStatus(studentId, "IN_PROGRESS")
+        return sessionRepository.findByUserIdAndStatus(studentId, ExamSessionStatus.IN_PROGRESS)
                 .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND, "No active exam session found"));
     }
 
     @Transactional
     public void syncExam(UUID sessionId, UUID studentId, ExamSyncRequest request) {
         ExamSession session = resolveSession(sessionId, studentId);
-        if ("SUBMITTED".equals(session.getStatus()) || "FLAGGED_TAB_SWITCH".equals(session.getStatus())) {
-            return; // Silently accept — session was already finalized
+        if (ExamSessionStatus.SUBMITTED.equals(session.getStatus()) || ExamSessionStatus.FLAGGED_TAB_SWITCH.equals(session.getStatus())) {
+            return;
         }
         session.setStatePayload(request.statePayload());
         
         if (Boolean.TRUE.equals(request.statePayload().get("isFinal"))) {
-            String reason = (String) request.statePayload().getOrDefault("reason", "NORMAL");
+            String reasonStr = (String) request.statePayload().getOrDefault("reason", ExamSessionStatus.NORMAL.name());
+            ExamSessionStatus reason = ExamSessionStatus.valueOf(reasonStr);
             finalizeExamSession(session, reason);
             return;
         }
@@ -189,137 +163,61 @@ public class ExamService {
 
     @Transactional
     public void submitExam(UUID sessionId, UUID studentId) {
-        submitExam(sessionId, studentId, "NORMAL");
+        submitExam(sessionId, studentId, ExamSessionStatus.NORMAL);
     }
 
     @Transactional
-    public void submitExam(UUID sessionId, UUID studentId, String reasonParam) {
+    public void submitExam(UUID sessionId, UUID studentId, ExamSessionStatus reasonParam) {
         ExamSession session = resolveSession(sessionId, studentId);
-        if ("SUBMITTED".equals(session.getStatus()) || "FLAGGED_TAB_SWITCH".equals(session.getStatus())) {
-            return; // Already finalized — idempotent
+        if (ExamSessionStatus.SUBMITTED.equals(session.getStatus()) || ExamSessionStatus.FLAGGED_TAB_SWITCH.equals(session.getStatus())) {
+            return; 
         }
 
-        String reason = reasonParam;
-        if (reason == null || "NORMAL".equals(reason)) {
-            reason = session.getStatePayload() != null ? (String) session.getStatePayload().getOrDefault("reason", "NORMAL") : "NORMAL";
+        ExamSessionStatus reason = reasonParam;
+        if (reason == null || ExamSessionStatus.NORMAL.equals(reason)) {
+            String stateReason = session.getStatePayload() != null ? (String) session.getStatePayload().getOrDefault("reason", ExamSessionStatus.NORMAL.name()) : ExamSessionStatus.NORMAL.name();
+            reason = ExamSessionStatus.valueOf(stateReason);
         }
         
         finalizeExamSession(session, reason);
     }
 
-    private void finalizeExamSession(ExamSession session, String reason) {
-        if ("SUBMITTED".equals(session.getStatus()) || "FLAGGED_TAB_SWITCH".equals(session.getStatus())) {
+    private void finalizeExamSession(ExamSession session, ExamSessionStatus reason) {
+        if (ExamSessionStatus.SUBMITTED.equals(session.getStatus()) || ExamSessionStatus.FLAGGED_TAB_SWITCH.equals(session.getStatus())) {
             return;
         }
 
         Instant expectedEndTime = session.getStartTime().plus(EXAM_DURATION_MINUTES, ChronoUnit.MINUTES);
         Instant now = Instant.now();
         
-        if ("FLAGGED_TAB_SWITCH".equals(reason)) {
-            session.setStatus("FLAGGED_TAB_SWITCH");
+        if (ExamSessionStatus.FLAGGED_TAB_SWITCH.equals(reason)) {
+            session.setStatus(ExamSessionStatus.FLAGGED_TAB_SWITCH);
         } else if (now.isAfter(expectedEndTime.plus(LATE_SUBMISSION_GRACE_SECONDS, ChronoUnit.SECONDS))) {
-            session.setStatus("LATE_SUBMISSION_FLAGGED");
+            session.setStatus(ExamSessionStatus.LATE_SUBMISSION_FLAGGED);
         } else {
-            session.setStatus("SUBMITTED");
+            session.setStatus(ExamSessionStatus.SUBMITTED);
         }
         
         session.setEndTime(now);
         sessionRepository.saveAndFlush(session);
 
-        // Transactional Outbox Pattern
         eventPublisher.publishEvent(new ExamSubmittedEvent(session.getId(), session.getUserId(), session.getStatePayload()));
     }
 
     @Transactional(readOnly = true)
-    public ExamPayloadResponse getActivePayload(UUID userId) {
-        @SuppressWarnings("unchecked")
-        List<Question> cachedQuestions = (List<Question>) redisTemplate.opsForValue().get("exam:questions:all");
-        if (cachedQuestions == null) {
-            cachedQuestions = questionAPI.getActiveQuestions();
-            redisTemplate.opsForValue().set("exam:questions:all", cachedQuestions);
-        }
-
-        com.studentprep.student.Student student = studentRepository.findById(userId).orElse(null);
-        List<String> enrolledSubjectIds = new ArrayList<>();
-        if (student != null) {
-            for (com.studentprep.questionbank.Subject subject : student.getSubjects()) {
-                enrolledSubjectIds.add(subject.getId().toString());
-            }
-        }
-
-        List<Question> filteredQuestions = new ArrayList<>();
-        for (Question q : cachedQuestions) {
-            if (student == null || q.getSubject() == null) {
-                filteredQuestions.add(q);
-            } else if (enrolledSubjectIds.contains(q.getSubject().getId().toString())) {
-                filteredQuestions.add(q);
-            }
-        }
-
-        return generateStrippedPayload(filteredQuestions);
-    }
-
-    private ExamPayloadResponse generateStrippedPayload(List<Question> questions) {
-        List<Object> strippedQuestions = new ArrayList<>();
-        Map<String, String> contextsMap = new HashMap<>();
-        
-        Map<String, List<Object>> groupedQuestions = new HashMap<>();
-        List<Object> standaloneQuestions = new ArrayList<>();
-
-        long hashSeed = 0;
-        for (Question q : questions) {
-            hashSeed += q.getId().hashCode();
-            Map<String, Object> map = this.objectMapper.convertValue(q, new TypeReference<Map<String, Object>>() {});
-            Map<String, Object> content = (Map<String, Object>) map.get("content");
-            if (content != null) {
-                content.remove("correctOption");
-            }
-            if (q.getContext() != null) {
-                String ctxId = q.getContext().getId().toString();
-                map.put("contextId", ctxId);
-                contextsMap.put(ctxId, q.getContext().getPassage());
-                groupedQuestions.computeIfAbsent(ctxId, k -> new ArrayList<>()).add(map);
-            } else {
-                standaloneQuestions.add(map);
-            }
-        }
-        
-        List<List<Object>> allGroups = new ArrayList<>();
-        allGroups.addAll(groupedQuestions.values());
-        for (Object sq : standaloneQuestions) {
-            allGroups.add(Collections.singletonList(sq));
-        }
-        
-        long seed = hashSeed == 0 ? 12345L : hashSeed;
-        Collections.shuffle(allGroups, new Random(seed));
-        
-        for (List<Object> group : allGroups) {
-            strippedQuestions.addAll(group);
-        }
-        
-        ExamPayloadResponse response = new ExamPayloadResponse();
-        response.setExamId(UUID.randomUUID());
-        response.setShuffleSeed(seed);
-        response.setDurationMinutes(EXAM_DURATION_MINUTES);
-        response.setQuestions(strippedQuestions);
-        response.setContexts(contextsMap);
-        return response;
-    }
-
-    @Transactional
     public Map<String, Object> getActiveSession(UUID userId) {
-        return sessionRepository.findByUserIdAndStatus(userId, "IN_PROGRESS")
+        return sessionRepository.findByUserIdAndStatus(userId, ExamSessionStatus.IN_PROGRESS)
             .map(session -> {
                 Instant expectedEndTime = session.getStartTime().plus(EXAM_DURATION_MINUTES, ChronoUnit.MINUTES);
                 Instant now = Instant.now();
                 if (now.isAfter(expectedEndTime.plus(LATE_SUBMISSION_GRACE_SECONDS, ChronoUnit.SECONDS))) {
-                    finalizeExamSession(session, "TIME_EXPIRED");
+                    finalizeExamSession(session, ExamSessionStatus.TIME_EXPIRED);
                     return null;
                 }
 
                 Map<String, Object> result = new HashMap<>();
                 result.put("sessionId", session.getId());
-                result.put("status", session.getStatus());
+                result.put("status", session.getStatus().name());
                 result.put("startTime", session.getStartTime().toString());
                 result.put("shuffleSeed", session.getShuffleSeed());
 

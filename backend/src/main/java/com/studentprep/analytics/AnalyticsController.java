@@ -1,8 +1,8 @@
 package com.studentprep.analytics;
 
 import com.studentprep.common.ApiResponse;
-import com.studentprep.exam.ExamSessionRepository;
-import com.studentprep.student.StudentRepository;
+import com.studentprep.exam.ExamInternalAPI;
+import com.studentprep.student.StudentInternalAPI;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -22,14 +22,14 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class AnalyticsController {
 
-    private final StudentRepository studentRepository;
+    private final StudentInternalAPI studentInternalAPI;
     private final ExamResultRepository examResultRepository;
     private final LeaderboardService leaderboardService;
-    private final ExamSessionRepository examSessionRepository;
+    private final ExamInternalAPI examInternalAPI;
 
     @GetMapping("/dashboard")
     public ResponseEntity<ApiResponse<Map<String, Object>>> getDashboard() {
-        long totalStudents = studentRepository.count();
+        long totalStudents = studentInternalAPI.countStudents();
         long completedExams = examResultRepository.count();
         Double averageScore = examResultRepository.getAverageScorePercentage();
         long passedExams = examResultRepository.countPassedExams();
@@ -45,8 +45,11 @@ public class AnalyticsController {
     }
 
     @GetMapping("/results")
-    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getResults() {
-        List<Map<String, Object>> results = examResultRepository.findAllWithStudent().stream()
+    public ResponseEntity<com.studentprep.common.PagedResponse<List<Map<String, Object>>>> getResults(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        org.springframework.data.domain.Page<ExamResult> resultsPage = examResultRepository.findAllWithStudent(org.springframework.data.domain.PageRequest.of(page, size));
+        List<Map<String, Object>> results = resultsPage.getContent().stream()
                 .map(r -> Map.<String, Object>of(
                         "id", r.getId(),
                         "studentName", r.getStudent().getName(),
@@ -55,7 +58,7 @@ public class AnalyticsController {
                         "topicBreakdown", r.getTopicBreakdown(),
                         "gradedAt", r.getGradedAt() != null ? r.getGradedAt().toString() : ""
                 )).collect(Collectors.toList());
-        return ResponseEntity.ok(ApiResponse.of(results));
+        return ResponseEntity.ok(com.studentprep.common.PagedResponse.of(results, resultsPage.getNumber(), resultsPage.getSize(), resultsPage.getTotalElements(), resultsPage.getTotalPages()));
     }
 
     @GetMapping("/exam/{examId}")
@@ -85,25 +88,7 @@ public class AnalyticsController {
 
     @GetMapping("/live-sessions")
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getLiveSessions() {
-        List<Map<String, Object>> sessions = examSessionRepository.findAllByStatus("IN_PROGRESS").stream().map(s -> {
-            String studentName = studentRepository.findById(s.getUserId())
-                    .map(student -> student.getName())
-                    .orElse("Unknown Student");
-            
-            Object timeLeftObj = s.getStatePayload() != null ? s.getStatePayload().get("timeLeft") : 7200;
-            int timeLeft = 7200;
-            if (timeLeftObj instanceof Number) {
-                timeLeft = ((Number) timeLeftObj).intValue();
-            }
-            
-            return Map.<String, Object>of(
-                    "sessionId", s.getId().toString(),
-                    "studentName", studentName,
-                    "timeLeft", timeLeft,
-                    "status", s.getStatus()
-            );
-        }).collect(Collectors.toList());
-        return ResponseEntity.ok(ApiResponse.of(sessions));
+        return ResponseEntity.ok(ApiResponse.of(examInternalAPI.getLiveSessions()));
     }
 
     @GetMapping("/subjects")

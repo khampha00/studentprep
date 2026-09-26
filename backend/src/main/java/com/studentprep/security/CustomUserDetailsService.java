@@ -32,7 +32,7 @@ public class CustomUserDetailsService implements UserDetailsService {
             User user = userOpt.get();
             return new org.springframework.security.core.userdetails.User(
                     user.getIdentifier(),
-                    user.getPinHash(),
+                    user.getPin(),
                     Collections.singletonList(new SimpleGrantedAuthority(user.getRole()))
             );
         }
@@ -42,7 +42,7 @@ public class CustomUserDetailsService implements UserDetailsService {
 
         return new org.springframework.security.core.userdetails.User(
                 student.getRegistrationNumber(),
-                student.getPinHash(),
+                student.getPin(),
                 Collections.singletonList(new SimpleGrantedAuthority("ROLE_STUDENT"))
         );
     }

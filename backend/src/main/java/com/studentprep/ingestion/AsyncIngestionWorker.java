@@ -24,6 +24,8 @@ import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import java.util.concurrent.CompletableFuture;
+
 @Service
 public class AsyncIngestionWorker {
 
@@ -77,7 +79,6 @@ public class AsyncIngestionWorker {
             int chunkSize = 4000;
             int currentStart = 0;
 
-            // First count total chunks to update the job
             List<String> chunks = new ArrayList<>();
             while (currentStart < markdown.length()) {
                 int targetEnd = Math.min(currentStart + chunkSize, markdown.length());
@@ -105,77 +106,7 @@ public class AsyncIngestionWorker {
             job.setTotalChunks(chunks.size());
             jobRepository.save(job);
 
-            int processedCount = 0;
-            QuestionContext currentContext = null;
-
-            for (String chunk : chunks) {
-                boolean success = false;
-                int maxRetries = 3;
-                int maxRateLimitWaits = 10;
-                int retryCount = 0;
-                int rateLimitCount = 0;
-                QuestionContext originalContext = currentContext;
-                
-                while (!success) {
-                    currentContext = originalContext;
-                    try {
-                        String warning = (currentContext != null) ? "Note: The previous chunk ended inside a shared context group for this specific passage:\n\n\"" + currentContext.getPassage() + "\"\n\nIf the first questions in this chunk belong to that passage, DO NOT extract the passage again, just set `is_follow_up: true` for those questions." : null;
-                        JsonNode structuredQuestions = llmStructuringService.structureChunk(chunk, warning);
-                        
-                        if (structuredQuestions.isArray()) {
-                            for (JsonNode qNode : structuredQuestions) {
-                                boolean isFollowUp = qNode.path("is_follow_up").asBoolean(false);
-                                if (!isFollowUp) {
-                                    currentContext = null;
-                                }
-
-                                if (qNode.hasNonNull("shared_context") && !qNode.path("shared_context").asText().isEmpty()) {
-                                    currentContext = new QuestionContext();
-                                    currentContext.setSubject(subject);
-                                    currentContext.setPassage(qNode.path("shared_context").asText());
-                                    currentContext = questionContextRepository.save(currentContext);
-                                }
-                                
-                                Question q = new Question();
-                                q.setStatus("DRAFT");
-                                q.setSubject(subject);
-                                if (currentContext != null) {
-                                    q.setContext(currentContext);
-                                }
-                                Map<String, Object> contentMap = objectMapper.convertValue(qNode, new TypeReference<Map<String, Object>>() {});
-                                q.setContent(contentMap);
-                                questionRepository.save(q);
-                            }
-                        }
-                        success = true;
-                    } catch (Exception e) {
-                        String errorMsg = e.getMessage();
-                        if (errorMsg != null && errorMsg.contains("429")) {
-                            rateLimitCount++;
-                            if (rateLimitCount >= maxRateLimitWaits) {
-                                throw new RuntimeException("Gemini API rate limit exceeded after " + maxRateLimitWaits + " waits. Please try again later.");
-                            }
-                            System.err.println("Hit 429 rate limit, patiently waiting 25s... (wait " + rateLimitCount + "/" + maxRateLimitWaits + ")");
-                            try { Thread.sleep(25000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
-                            // Do NOT increment retryCount — rate limits are not real failures
-                        } else {
-                            retryCount++;
-                            System.err.println("Failed to process chunk (attempt " + retryCount + "/" + maxRetries + "): " + errorMsg);
-                            if (retryCount >= maxRetries) {
-                                throw new RuntimeException("LLM Extraction failed after " + maxRetries + " retries: " + errorMsg);
-                            }
-                            try { Thread.sleep(3000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
-                        }
-                    }
-                }
-
-                processedCount++;
-                job.setProcessedChunks(processedCount);
-                jobRepository.save(job);
-            }
-
-            job.setStatus(IngestionJobStatus.COMPLETED);
-            jobRepository.save(job);
+            processChunkAsync(job, subject, chunks, 0, null, 0, 0);
 
         } catch (Exception e) {
             e.printStackTrace();
@@ -183,5 +114,78 @@ public class AsyncIngestionWorker {
             job.setErrorMessage(e.getMessage());
             jobRepository.save(job);
         }
+    }
+
+    private void processChunkAsync(IngestionJob job, Subject subject, List<String> chunks, int index, 
+                                   QuestionContext currentContext, int retryCount, int rateLimitCount) {
+        if (index >= chunks.size()) {
+            job.setStatus(IngestionJobStatus.COMPLETED);
+            jobRepository.save(job);
+            return;
+        }
+
+        CompletableFuture.runAsync(() -> {
+            String chunk = chunks.get(index);
+            QuestionContext originalContext = currentContext;
+            
+            try {
+                String warning = (originalContext != null) ? "Note: The previous chunk ended inside a shared context group for this specific passage:\n\n\"" + originalContext.getPassage() + "\"\n\nIf the first questions in this chunk belong to that passage, DO NOT extract the passage again, just set `is_follow_up: true` for those questions." : null;
+                JsonNode structuredQuestions = llmStructuringService.structureChunk(chunk, warning);
+                
+                QuestionContext nextContext = originalContext;
+                if (structuredQuestions.isArray()) {
+                    for (JsonNode qNode : structuredQuestions) {
+                        boolean isFollowUp = qNode.path("is_follow_up").asBoolean(false);
+                        if (!isFollowUp) {
+                            nextContext = null;
+                        }
+
+                        if (qNode.hasNonNull("shared_context") && !qNode.path("shared_context").asText().isEmpty()) {
+                            nextContext = new QuestionContext();
+                            nextContext.setSubject(subject);
+                            nextContext.setPassage(qNode.path("shared_context").asText());
+                            nextContext = questionContextRepository.save(nextContext);
+                        }
+                        
+                        Question q = new Question();
+                        q.setStatus(com.studentprep.questionbank.QuestionStatus.DRAFT);
+                        q.setSubject(subject);
+                        if (nextContext != null) {
+                            q.setContext(nextContext);
+                        }
+                        Map<String, Object> contentMap = objectMapper.convertValue(qNode, new TypeReference<Map<String, Object>>() {});
+                        q.setContent(contentMap);
+                        questionRepository.save(q);
+                    }
+                }
+                
+                job.setProcessedChunks(index + 1);
+                jobRepository.save(job);
+                
+                processChunkAsync(job, subject, chunks, index + 1, nextContext, 0, 0);
+
+            } catch (Exception e) {
+                String errorMsg = e.getMessage();
+                if (errorMsg != null && errorMsg.contains("429")) {
+                    if (rateLimitCount + 1 >= 10) {
+                        job.setStatus(IngestionJobStatus.FAILED);
+                        job.setErrorMessage("Gemini API rate limit exceeded after 10 waits. Please try again later.");
+                        jobRepository.save(job);
+                        return;
+                    }
+                    System.err.println("Hit 429 rate limit, patiently waiting 25s... (wait " + (rateLimitCount + 1) + "/10)");
+                    java.util.concurrent.CompletableFuture.runAsync(() -> processChunkAsync(job, subject, chunks, index, originalContext, retryCount, rateLimitCount + 1), java.util.concurrent.CompletableFuture.delayedExecutor(25, java.util.concurrent.TimeUnit.SECONDS));
+                } else {
+                    if (retryCount + 1 >= 3) {
+                        job.setStatus(IngestionJobStatus.FAILED);
+                        job.setErrorMessage("LLM Extraction failed after 3 retries: " + errorMsg);
+                        jobRepository.save(job);
+                        return;
+                    }
+                    System.err.println("Failed to process chunk (attempt " + (retryCount + 1) + "/3): " + errorMsg);
+                    java.util.concurrent.CompletableFuture.runAsync(() -> processChunkAsync(job, subject, chunks, index, originalContext, retryCount + 1, rateLimitCount), java.util.concurrent.CompletableFuture.delayedExecutor(3, java.util.concurrent.TimeUnit.SECONDS));
+                }
+            }
+        });
     }
 }

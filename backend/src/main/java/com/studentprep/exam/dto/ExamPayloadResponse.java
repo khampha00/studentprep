@@ -9,6 +9,7 @@ public class ExamPayloadResponse {
     private Integer durationMinutes;
     private List<Object> questions;
     private java.util.Map<String, String> contexts;
+    private StudentProfileDto student;
 
     public UUID getExamId() { return examId; }
     public void setExamId(UUID examId) { this.examId = examId; }
@@ -20,4 +21,6 @@ public class ExamPayloadResponse {
     public void setQuestions(List<Object> questions) { this.questions = questions; }
     public java.util.Map<String, String> getContexts() { return contexts; }
     public void setContexts(java.util.Map<String, String> contexts) { this.contexts = contexts; }
+    public StudentProfileDto getStudent() { return student; }
+    public void setStudent(StudentProfileDto student) { this.student = student; }
 }

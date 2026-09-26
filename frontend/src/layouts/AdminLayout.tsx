@@ -16,7 +16,17 @@ import {
 export default function AdminLayout() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      await fetch('/api/v1/auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+    } catch {
+      // best-effort
+    }
     localStorage.removeItem('token');
     window.location.href = '/admin'; // Redirects to login
   };

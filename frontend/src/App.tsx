@@ -22,6 +22,7 @@ import Login from './pages/auth/Login';
 import Dashboard from './pages/student/Dashboard';
 import ExamDashboard from './pages/exam/ExamDashboard';
 import ResultPage from './pages/student/ResultPage';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 axios.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
@@ -32,7 +33,7 @@ axios.interceptors.request.use((config) => {
 });
 
 let isRefreshing = false;
-let failedQueue: any[] = [];
+let failedQueue: { resolve: (value?: any) => void; reject: (reason?: any) => void }[] = [];
 
 const processQueue = (error: any, token: string | null = null) => {
   failedQueue.forEach((prom) => {
@@ -57,6 +58,8 @@ axios.interceptors.response.use(
       // If the 401 is due to concurrent login on another device, evict immediately
       const isAnotherDevice = error.response.data?.message === 'Session active on another device';
       if (isAnotherDevice) {
+        // Fire-and-forget: clear Redis key without blocking navigation
+        axios.post('/api/v1/auth/logout', {}, { withCredentials: true }).catch(() => {});
         localStorage.removeItem('token');
         if (window.location.pathname.startsWith('/admin')) {
           window.location.href = '/admin?error=session_expired';
@@ -92,6 +95,8 @@ axios.interceptors.response.use(
         return axios(originalRequest);
       } catch (refreshError) {
         processQueue(refreshError, null);
+        // Fire-and-forget: clear Redis key silently on refresh failure
+        axios.post('/api/v1/auth/logout', {}, { withCredentials: true }).catch(() => {});
         localStorage.removeItem('token');
         if (window.location.pathname.startsWith('/admin')) {
           window.location.href = '/admin?error=session_expired';
@@ -126,42 +131,44 @@ function StudentProtectedRoute({ children }: { children: React.ReactNode }) {
 export default function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Login />} />
-        
-        <Route path="/dashboard" element={
-          <StudentProtectedRoute>
-            <Dashboard />
-          </StudentProtectedRoute>
-        } />
-        
-        <Route path="/exam" element={
-          <StudentProtectedRoute>
-            <ExamDashboard />
-          </StudentProtectedRoute>
-        } />
-        
-        <Route path="/result" element={
-          <StudentProtectedRoute>
-            <ResultPage />
-          </StudentProtectedRoute>
-        } />
-        
-        <Route 
-          path="/admin" 
-          element={
-            <AdminProtectedRoute>
-              <AdminLayout />
-            </AdminProtectedRoute>
-          }
-        >
-          <Route index element={<AdminDashboard />} />
-          <Route path="subjects" element={<SubjectList />} />
-          <Route path="subjects/:id" element={<SubjectDetail />} />
-          <Route path="students" element={<StudentsPage />} />
-          <Route path="results" element={<ResultsPage />} />
-        </Route>
-      </Routes>
+      <ErrorBoundary>
+        <Routes>
+          <Route path="/" element={<Login />} />
+          
+          <Route path="/dashboard" element={
+            <StudentProtectedRoute>
+              <Dashboard />
+            </StudentProtectedRoute>
+          } />
+          
+          <Route path="/exam" element={
+            <StudentProtectedRoute>
+              <ExamDashboard />
+            </StudentProtectedRoute>
+          } />
+          
+          <Route path="/result" element={
+            <StudentProtectedRoute>
+              <ResultPage />
+            </StudentProtectedRoute>
+          } />
+          
+          <Route 
+            path="/admin" 
+            element={
+              <AdminProtectedRoute>
+                <AdminLayout />
+              </AdminProtectedRoute>
+            }
+          >
+            <Route index element={<AdminDashboard />} />
+            <Route path="subjects" element={<SubjectList />} />
+            <Route path="subjects/:id" element={<SubjectDetail />} />
+            <Route path="students" element={<StudentsPage />} />
+            <Route path="results" element={<ResultsPage />} />
+          </Route>
+        </Routes>
+      </ErrorBoundary>
       <Toaster 
         position="top-center" 
         toastOptions={{

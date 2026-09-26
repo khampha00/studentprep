@@ -25,7 +25,12 @@ export default function ResultPage() {
     fetchResults();
   }, []);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await axios.post('/api/v1/auth/logout', {}, { withCredentials: true });
+    } catch {
+      // best-effort
+    }
     localStorage.removeItem('token');
     navigate('/');
   };

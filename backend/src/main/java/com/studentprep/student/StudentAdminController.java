@@ -19,23 +19,25 @@ import java.util.stream.Collectors;
 @RequestMapping("/api/v1/admin/students")
 public class StudentAdminController {
 
-    private final StudentService studentService;
+    private final CsvStudentImporter csvStudentImporter;
+    private final RegistrationSlipGenerator registrationSlipGenerator;
     private final StudentRepository studentRepository;
 
-    public StudentAdminController(StudentService studentService, StudentRepository studentRepository) {
-        this.studentService = studentService;
+    public StudentAdminController(CsvStudentImporter csvStudentImporter, RegistrationSlipGenerator registrationSlipGenerator, StudentRepository studentRepository) {
+        this.csvStudentImporter = csvStudentImporter;
+        this.registrationSlipGenerator = registrationSlipGenerator;
         this.studentRepository = studentRepository;
     }
 
     @PostMapping("/bulk")
     public ResponseEntity<ApiResponse<Map<String, Object>>> bulkUpload(@RequestParam("csvFile") MultipartFile csvFile) {
-        Map<String, Object> result = studentService.processBulkCsv(csvFile);
+        Map<String, Object> result = csvStudentImporter.processBulkCsv(csvFile);
         return ResponseEntity.ok(ApiResponse.of(result));
     }
 
     @GetMapping(value = "/{id}/slip", produces = MediaType.APPLICATION_PDF_VALUE)
     public ResponseEntity<byte[]> getRegistrationSlip(@PathVariable UUID id) {
-        byte[] pdfBytes = studentService.getRegistrationSlipPdf(id);
+        byte[] pdfBytes = registrationSlipGenerator.getRegistrationSlipPdf(id);
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_PDF);
         headers.setContentDispositionFormData("attachment", "slip.pdf");
@@ -44,7 +46,7 @@ public class StudentAdminController {
 
     @GetMapping(value = "/export", produces = "text/csv")
     public ResponseEntity<byte[]> exportStudentsCsv() {
-        byte[] csvBytes = studentService.exportStudentsCsv();
+        byte[] csvBytes = csvStudentImporter.exportStudentsCsv();
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.parseMediaType("text/csv"));
         headers.setContentDispositionFormData("attachment", "student_credentials.csv");
@@ -61,7 +63,7 @@ public class StudentAdminController {
                         "id", s.getId(),
                         "name", s.getName(),
                         "registrationNumber", s.getRegistrationNumber(),
-                        "pin", "12345",
+                        "pin", s.getPin(),
                         "state", s.getState(),
                         "examCenter", s.getExamCenter() != null ? s.getExamCenter() : ""
                 )).collect(Collectors.toList());

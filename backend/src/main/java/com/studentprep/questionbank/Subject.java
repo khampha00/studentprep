@@ -11,6 +11,7 @@ public class Subject {
     @GeneratedValue(strategy = GenerationType.AUTO)
     private UUID id;
 
+    @jakarta.validation.constraints.NotBlank(message = "Name is required")
     @Column(nullable = false, unique = true, length = 100)
     private String name;
 

@@ -1,6 +1,7 @@
 package com.studentprep.questionbank;
 
 import com.studentprep.questionbank.dto.ContextLinkRequest;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
@@ -13,24 +14,38 @@ public class QuestionService implements QuestionInternalAPI {
 
     private final QuestionRepository repository;
     private final QuestionContextRepository contextRepository;
+    private final RedisTemplate<String, Object> redisTemplate;
 
-    public QuestionService(QuestionRepository repository, QuestionContextRepository contextRepository) {
+    public QuestionService(QuestionRepository repository, QuestionContextRepository contextRepository, RedisTemplate<String, Object> redisTemplate) {
         this.repository = repository;
         this.contextRepository = contextRepository;
+        this.redisTemplate = redisTemplate;
+    }
+
+    private void evictQuestionsCache() {
+        redisTemplate.delete("exam:questions:all");
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<Question> getActiveQuestions() {
-        return repository.findByStatusOrderByCreatedAtAsc("ACTIVE");
+        return repository.findByStatusOrderByCreatedAtAsc(QuestionStatus.ACTIVE);
     }
 
     @Transactional(readOnly = true)
     public List<Question> getQuestions(String status, UUID subjectId) {
-        if (subjectId != null) {
-            return repository.findByStatusAndSubjectIdOrderByCreatedAtAsc(status, subjectId);
+        QuestionStatus qStatus;
+        try {
+            qStatus = QuestionStatus.valueOf(status.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return new ArrayList<>();
         }
-        return repository.findByStatusOrderByCreatedAtAsc(status);
+        
+        if (subjectId != null) {
+            return repository.findByStatusAndSubject_IdOrderByCreatedAtAsc(qStatus, subjectId);
+        } else {
+            return repository.findByStatusOrderByCreatedAtAsc(qStatus);
+        }
     }
 
     @Transactional
@@ -38,7 +53,9 @@ public class QuestionService implements QuestionInternalAPI {
         return repository.findById(id).map(q -> {
             q.setStatus(updateRequest.getStatus());
             q.setContent(updateRequest.getContent());
-            return repository.save(q);
+            Question saved = repository.save(q);
+            evictQuestionsCache();
+            return saved;
         }).orElseThrow(() -> new IllegalArgumentException("Question not found"));
     }
 
@@ -47,26 +64,28 @@ public class QuestionService implements QuestionInternalAPI {
         Question q = repository.findById(id).orElseThrow(() -> new IllegalArgumentException("Question not found"));
         QuestionContext ctx = q.getContext();
         repository.delete(q);
-        if (ctx != null && repository.countByContextId(ctx.getId()) == 0) {
+        if (ctx != null && repository.countByContext_Id(ctx.getId()) == 0) {
             contextRepository.delete(ctx);
         }
+        evictQuestionsCache();
     }
 
     @Transactional
     public void deleteDraftsBulk(UUID subjectId) {
-        repository.deleteByStatusAndSubjectId("DRAFT", subjectId);
+        repository.deleteByStatusAndSubject_Id(QuestionStatus.DRAFT, subjectId);
         contextRepository.deleteOrphanedContexts();
     }
 
     @Transactional
     public void deleteAllActive(UUID subjectId) {
-        repository.deleteByStatusAndSubjectId("ACTIVE", subjectId);
+        repository.deleteByStatusAndSubject_Id(QuestionStatus.ACTIVE, subjectId);
         contextRepository.deleteOrphanedContexts();
+        evictQuestionsCache();
     }
 
     @Transactional
     public void approveAllDrafts(UUID subjectId) {
-        List<Question> drafts = repository.findByStatusAndSubjectIdOrderByCreatedAtAsc("DRAFT", subjectId);
+        List<Question> drafts = repository.findByStatusAndSubject_IdOrderByCreatedAtAsc(QuestionStatus.DRAFT, subjectId);
         List<String> missingAnswers = new ArrayList<>();
         
         for (Question q : drafts) {
@@ -81,9 +100,10 @@ public class QuestionService implements QuestionInternalAPI {
         }
         
         for (Question q : drafts) {
-            q.setStatus("ACTIVE");
+            q.setStatus(QuestionStatus.ACTIVE);
             repository.save(q);
         }
+        evictQuestionsCache();
     }
 
     @Transactional
@@ -93,19 +113,20 @@ public class QuestionService implements QuestionInternalAPI {
         if (ctx != null) {
             q.setContext(null);
             repository.save(q);
-            if (repository.countByContextId(ctx.getId()) == 0) {
+            if (repository.countByContext_Id(ctx.getId()) == 0) {
                 contextRepository.delete(ctx);
             }
+            evictQuestionsCache();
         }
     }
 
     @Transactional
     public void ungroupContext(UUID contextId) {
-        List<Question> questions = repository.findByContextId(contextId);
+        List<Question> questions = repository.findByContext_Id(contextId);
         boolean anyActive = false;
         
         for (Question q : questions) {
-            if ("DRAFT".equals(q.getStatus())) {
+            if (QuestionStatus.DRAFT.equals(q.getStatus())) {
                 q.setContext(null);
                 repository.save(q);
             } else {
@@ -116,6 +137,7 @@ public class QuestionService implements QuestionInternalAPI {
         if (!anyActive) {
             contextRepository.deleteById(contextId);
         }
+        evictQuestionsCache();
     }
 
     @Transactional
@@ -130,23 +152,26 @@ public class QuestionService implements QuestionInternalAPI {
             QuestionContext savedCtx = contextRepository.save(newCtx);
             q.setContext(savedCtx);
         }
-        return repository.save(q);
+        Question saved = repository.save(q);
+        evictQuestionsCache();
+        return saved;
     }
 
     @Transactional
     public void approveContextGroup(UUID contextId) {
-        List<Question> questions = repository.findByContextId(contextId);
+        List<Question> questions = repository.findByContext_Id(contextId);
         for (Question q : questions) {
-            if ("DRAFT".equals(q.getStatus()) && !canBeApproved(q)) {
+            if (QuestionStatus.DRAFT.equals(q.getStatus()) && !canBeApproved(q)) {
                 throw new IllegalStateException("Question missing correct option");
             }
         }
         for (Question q : questions) {
-            if ("DRAFT".equals(q.getStatus())) {
-                q.setStatus("ACTIVE");
+            if (QuestionStatus.DRAFT.equals(q.getStatus())) {
+                q.setStatus(QuestionStatus.ACTIVE);
                 repository.save(q);
             }
         }
+        evictQuestionsCache();
     }
     
     private boolean canBeApproved(Question q) {
