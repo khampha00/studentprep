@@ -14,6 +14,10 @@ public class ExamInternalAPIImpl implements ExamInternalAPI {
     private final ExamSessionRepository sessionRepository;
     private final StudentInternalAPI studentInternalAPI;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    @org.springframework.context.annotation.Lazy
+    private ExamSessionManager examSessionManager;
+
     public ExamInternalAPIImpl(ExamSessionRepository sessionRepository, StudentInternalAPI studentInternalAPI) {
         this.sessionRepository = sessionRepository;
         this.studentInternalAPI = studentInternalAPI;
@@ -31,7 +35,18 @@ public class ExamInternalAPIImpl implements ExamInternalAPI {
 
     @Override
     public List<Map<String, Object>> getLiveSessions() {
-        return sessionRepository.findAllByStatus(ExamSessionStatus.IN_PROGRESS).stream().map(s -> {
+        java.time.Instant now = java.time.Instant.now();
+        List<ExamSession> validSessions = new java.util.ArrayList<>();
+        for (ExamSession s : sessionRepository.findAllByStatus(ExamSessionStatus.IN_PROGRESS)) {
+            java.time.Instant expectedEndTime = s.getStartTime().plus(120, java.time.temporal.ChronoUnit.MINUTES);
+            if (now.isAfter(expectedEndTime.plus(10, java.time.temporal.ChronoUnit.SECONDS))) {
+                examSessionManager.submitExam(s.getId(), s.getUserId(), ExamSessionStatus.TIME_EXPIRED);
+            } else {
+                validSessions.add(s);
+            }
+        }
+        
+        return validSessions.stream().map(s -> {
             String studentName = studentInternalAPI.findById(s.getUserId())
                     .map(com.studentprep.student.Student::getName)
                     .orElse("Unknown Student");

@@ -83,7 +83,19 @@ public class AnalyticsController {
 
     @GetMapping("/leaderboard")
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getLeaderboard(@RequestParam(defaultValue = "10") int topN) {
-        return ResponseEntity.ok(ApiResponse.of(leaderboardService.getLeaderboard(topN)));
+        List<Map<String, Object>> leaderboard = leaderboardService.getLeaderboard(topN);
+        List<Map<String, Object>> result = leaderboard.stream().map(entry -> {
+            Map<String, Object> map = new HashMap<>(entry);
+            try {
+                UUID studentId = UUID.fromString((String) map.get("studentId"));
+                String name = studentInternalAPI.findById(studentId).map(com.studentprep.student.Student::getName).orElse("Unknown");
+                map.put("studentName", name);
+            } catch (Exception e) {
+                map.put("studentName", "Unknown");
+            }
+            return map;
+        }).collect(Collectors.toList());
+        return ResponseEntity.ok(ApiResponse.of(result));
     }
 
     @GetMapping("/live-sessions")
@@ -124,5 +136,9 @@ public class AnalyticsController {
             .collect(Collectors.toList());
 
         return ResponseEntity.ok(ApiResponse.of(subjects));
+    }
+    @GetMapping("/subject-registrations")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getSubjectRegistrations() {
+        return ResponseEntity.ok(ApiResponse.of(studentInternalAPI.getSubjectRegistrations()));
     }
 }

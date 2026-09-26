@@ -28,4 +28,14 @@ public class StudentInternalAPIImpl implements StudentInternalAPI {
     public long countStudents() {
         return studentRepository.count();
     }
+
+    @Override
+    public java.util.List<java.util.Map<String, Object>> getSubjectRegistrations() {
+        return studentRepository.countSubjectRegistrations().stream().map(obj -> {
+            java.util.Map<String, Object> map = new java.util.HashMap<>();
+            map.put("subjectName", obj[0]);
+            map.put("enrollmentCount", obj[1]);
+            return map;
+        }).collect(java.util.stream.Collectors.toList());
+    }
 }
