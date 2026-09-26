@@ -15,6 +15,13 @@ import com.studentprep.common.ApiResponse;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import com.studentprep.student.StudentInternalAPI;
 import com.studentprep.exam.ExamInternalAPI;
+import com.studentprep.student.Student;
+import java.util.Optional;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.http.ResponseCookie;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpHeaders;
 
 @RestController
 @RequestMapping("/api/v1/auth")
@@ -46,18 +53,18 @@ public class AuthController {
                 new UsernamePasswordAuthenticationToken(cleanIdentifier, cleanPin)
         );
 
-        java.util.Optional<com.studentprep.student.Student> studentOpt = studentInternalAPI.findByRegistrationNumberIgnoreCase(cleanIdentifier);
+        Optional<Student> studentOpt = studentInternalAPI.findByRegistrationNumberIgnoreCase(cleanIdentifier);
         if (studentOpt.isPresent()) {
-            com.studentprep.student.Student student = studentOpt.get();
+            Student student = studentOpt.get();
             if (examInternalAPI.hasFlaggedSession(student.getId())) {
-                throw new org.springframework.web.server.ResponseStatusException(
-                        org.springframework.http.HttpStatus.FORBIDDEN,
+                throw new ResponseStatusException(
+                        HttpStatus.FORBIDDEN,
                         "Your account has been blocked due to exam malpractice. You cannot log in."
                 );
             }
             if (examInternalAPI.hasActiveSession(student.getId())) {
-                throw new org.springframework.web.server.ResponseStatusException(
-                        org.springframework.http.HttpStatus.CONFLICT,
+                throw new ResponseStatusException(
+                        HttpStatus.CONFLICT,
                         "Only one session allowed. You already have an active examination in progress on another device."
                 );
             }
@@ -90,14 +97,14 @@ public class AuthController {
         } else {
             Boolean sessionCreated = redisTemplate.opsForValue().setIfAbsent("session:" + authentication.getName(), jti, Duration.ofDays(7));
             if (Boolean.FALSE.equals(sessionCreated)) {
-                throw new org.springframework.web.server.ResponseStatusException(
-                    org.springframework.http.HttpStatus.CONFLICT,
+                throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
                     "Only one session allowed. This account is already logged in on another device. Please log out first."
                 );
             }
         }
 
-        org.springframework.http.ResponseCookie cookie = org.springframework.http.ResponseCookie.from("refreshToken", refreshToken)
+        ResponseCookie cookie = ResponseCookie.from("refreshToken", refreshToken)
                 .httpOnly(true)
                 .secure(false)
                 .sameSite("Lax")
@@ -106,12 +113,12 @@ public class AuthController {
                 .build();
 
         return ResponseEntity.ok()
-                .header(org.springframework.http.HttpHeaders.SET_COOKIE, cookie.toString())
+                .header(HttpHeaders.SET_COOKIE, cookie.toString())
                 .body(ApiResponse.of(Map.of("accessToken", token, "expiresIn", 900, "role", role)));
     }
 
     @PostMapping("/logout")
-    public ResponseEntity<Void> logout(@org.springframework.web.bind.annotation.RequestHeader(value = "Authorization", required = false) String authHeader) {
+    public ResponseEntity<Void> logout(@RequestHeader(value = "Authorization", required = false) String authHeader) {
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             String token = authHeader.substring(7);
             try {
@@ -121,7 +128,7 @@ public class AuthController {
                 // If token is malformed/expired, still expire the cookie
             }
         }
-        org.springframework.http.ResponseCookie expiredCookie = org.springframework.http.ResponseCookie.from("refreshToken", "")
+        ResponseCookie expiredCookie = ResponseCookie.from("refreshToken", "")
                 .httpOnly(true)
                 .secure(false)
                 .sameSite("Lax")
@@ -129,7 +136,7 @@ public class AuthController {
                 .maxAge(0)
                 .build();
         return ResponseEntity.ok()
-                .header(org.springframework.http.HttpHeaders.SET_COOKIE, expiredCookie.toString())
+                .header(HttpHeaders.SET_COOKIE, expiredCookie.toString())
                 .build();
     }
 
