@@ -123,14 +123,23 @@ export const syncExamData = createAsyncThunk(
             }
 
             const sessionParam = `?sessionId=${state.sessionId}`;
-            await axios.post(`/api/v1/exams/active/sync${sessionParam}`, {
-                statePayload: {
-                    answers: state.answers,
-                    timeLeft: state.timeLeft,
-                    lastUpdated: state.lastUpdated,
-                    isFinal: isFinalSync,
-                    reason: reason
-                }
+            const token = localStorage.getItem('token');
+            await fetch(`/api/v1/exams/active/sync${sessionParam}`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    statePayload: {
+                        answers: state.answers,
+                        timeLeft: state.timeLeft,
+                        lastUpdated: state.lastUpdated,
+                        isFinal: isFinalSync,
+                        reason: reason
+                    }
+                }),
+                keepalive: isFinalSync
             });
             if (state.sessionId) {
                 await db.examStates.update(state.sessionId, { isSynced: true });
@@ -139,7 +148,14 @@ export const syncExamData = createAsyncThunk(
                 const submitParam = state.sessionId 
                     ? `?sessionId=${state.sessionId}&reason=${encodeURIComponent(reason)}` 
                     : `?reason=${encodeURIComponent(reason)}`;
-                await axios.post(`/api/v1/exams/active/submit${submitParam}`);
+                const token = localStorage.getItem('token');
+                await fetch(`/api/v1/exams/active/submit${submitParam}`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    },
+                    keepalive: true
+                });
             }
             return true;
         } catch (e) {
