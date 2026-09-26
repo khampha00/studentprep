@@ -24,8 +24,24 @@ export default function Login() {
       toast.error('Your exam was terminated due to malpractice (Tab Switching). Contact your supervisor for further instructions.');
     } else if (isSessionExpired) {
       toast.error('You have been logged out because your account was accessed from another device.');
+    } else {
+      const token = localStorage.getItem('token');
+      if (token) {
+        try {
+          const base64Url = token.split('.')[1];
+          const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+          const payload = JSON.parse(atob(base64));
+          if (payload.role === 'ROLE_ADMIN' || payload.role === 'ROLE_SUPERVISOR') {
+             navigate('/admin', { replace: true });
+          } else {
+             navigate('/dashboard', { replace: true });
+          }
+        } catch (e) {
+          localStorage.removeItem('token');
+        }
+      }
     }
-  }, [wasTerminated, isSessionExpired]);
+  }, [wasTerminated, isSessionExpired, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

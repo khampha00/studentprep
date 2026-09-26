@@ -27,7 +27,9 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 axios.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
   if (token && config.url?.startsWith('/api')) {
-    config.headers.Authorization = `Bearer ${token}`;
+    if (!config.url.includes('/api/v1/auth/login') && !config.url.includes('/api/v1/auth/refresh')) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
   }
   return config;
 });

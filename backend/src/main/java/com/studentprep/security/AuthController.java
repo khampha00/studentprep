@@ -36,7 +36,9 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> login(@Valid @RequestBody LoginRequest request) {
+    public ResponseEntity<ApiResponse<Map<String, Object>>> login(
+            @Valid @RequestBody LoginRequest request,
+            @CookieValue(name = "refreshToken", required = false) String existingRefreshToken) {
         String cleanIdentifier = request.identifier() != null ? request.identifier().trim() : "";
         String cleanPin = request.pin() != null ? request.pin().trim() : "";
 
@@ -66,16 +68,33 @@ public class AuthController {
                 .findFirst()
                 .orElse("ROLE_STUDENT");
                 
+        // Determine if they are logging in from the same exact device/browser
+        boolean isSameDevice = false;
+        if (existingRefreshToken != null && jwtUtil.isTokenValid(existingRefreshToken)) {
+            try {
+                String oldJti = jwtUtil.extractJti(existingRefreshToken);
+                String storedJti = redisTemplate.opsForValue().get("session:" + authentication.getName());
+                if (storedJti != null && storedJti.equals(oldJti)) {
+                    isSameDevice = true;
+                }
+            } catch (Exception ignored) {
+            }
+        }
+
         String jti = UUID.randomUUID().toString();
         String token = jwtUtil.generateToken(authentication.getName(), role, jti);
         String refreshToken = jwtUtil.generateRefreshToken(authentication.getName(), role, jti);
 
-        Boolean sessionCreated = redisTemplate.opsForValue().setIfAbsent("session:" + authentication.getName(), jti, Duration.ofDays(7));
-        if (Boolean.FALSE.equals(sessionCreated)) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                org.springframework.http.HttpStatus.CONFLICT,
-                "Only one session allowed. This account is already logged in on another device. Please log out first."
-            );
+        if (isSameDevice) {
+            redisTemplate.opsForValue().set("session:" + authentication.getName(), jti, Duration.ofDays(7));
+        } else {
+            Boolean sessionCreated = redisTemplate.opsForValue().setIfAbsent("session:" + authentication.getName(), jti, Duration.ofDays(7));
+            if (Boolean.FALSE.equals(sessionCreated)) {
+                throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.CONFLICT,
+                    "Only one session allowed. This account is already logged in on another device. Please log out first."
+                );
+            }
         }
 
         org.springframework.http.ResponseCookie cookie = org.springframework.http.ResponseCookie.from("refreshToken", refreshToken)
@@ -138,6 +157,7 @@ public class AuthController {
         }
         
         String newAccessToken = jwtUtil.generateToken(identifier, role, jti);
+        redisTemplate.expire("session:" + identifier, Duration.ofDays(7));
         return ResponseEntity.ok(ApiResponse.of(Map.of("accessToken", newAccessToken, "expiresIn", 900, "role", role)));
     }
 }
