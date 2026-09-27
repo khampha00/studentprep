@@ -154,11 +154,10 @@ public class AsyncIngestionWorker {
                             nextContext.setSubject(subject);
                             nextContext.setPassage(qNode.path("shared_context").asText());
                             nextContext = questionContextRepository.save(nextContext);
-                        } else if (!isFollowUp && nextContext != null) {
-                            // Not a follow-up and no shared_context — check if the NEXT question
-                            // has is_follow_up or shared_context pointing to a different group.
-                            // If this question is truly standalone, break the context chain.
-                            nextContext = null;
+                        } else if (nextContext != null) {
+                            // Assume it's a follow-up since LLM often misses is_follow_up
+                            // If this question is truly standalone, Admin can ungroup it in the UI.
+                            // nextContext remains the same.
                         }
                         // If isFollowUp is true but no shared_context, keep using nextContext (correct behavior)
 
@@ -248,15 +247,15 @@ public class AsyncIngestionWorker {
                 
                 System.out.println("[PostProcess] Created context " + activeContext.getId() 
                         + " for question " + q.getId() + " (shared_context found)");
-            } else if (isFollowUp && activeContext != null) {
-                // Follow-up question that should share the previous context
+            } else if (activeContext != null) {
+                // Assume follow-up question that should share the previous context
                 q.setContext(activeContext);
                 questionRepository.save(q);
                 
                 System.out.println("[PostProcess] Linked question " + q.getId() 
-                        + " to context " + activeContext.getId() + " (is_follow_up=true)");
+                        + " to context " + activeContext.getId() + " (assumed follow-up)");
             } else {
-                // Standalone question — break the context chain
+                // Standalone question
                 activeContext = null;
             }
         }

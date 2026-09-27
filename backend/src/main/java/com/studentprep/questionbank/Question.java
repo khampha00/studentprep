@@ -28,7 +28,6 @@ public class Question extends BaseEntity {
 
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "context_id")
-    @JsonIgnore
     private QuestionContext context;
 
     @jakarta.persistence.Transient

@@ -208,7 +208,7 @@ public class QuestionService implements QuestionInternalAPI {
                 
                 q.setContext(activeContext);
                 repository.save(q);
-            } else if (isFollowUp && activeContext != null) {
+            } else if (activeContext != null) {
                 q.setContext(activeContext);
                 repository.save(q);
             } else {
