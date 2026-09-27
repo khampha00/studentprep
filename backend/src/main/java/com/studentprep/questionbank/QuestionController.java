@@ -100,4 +100,10 @@ public class QuestionController {
             return ResponseEntity.badRequest().body(ApiResponse.of(Map.of("error", e.getMessage())));
         }
     }
+
+    @PostMapping("/relink-contexts")
+    public ResponseEntity<ApiResponse<Map<String, String>>> relinkContexts(@RequestParam UUID subjectId) {
+        questionService.relinkContextsForSubject(subjectId);
+        return ResponseEntity.ok(ApiResponse.of(Map.of("status", "SUCCESS", "message", "Context groups re-linked for subject")));
+    }
 }

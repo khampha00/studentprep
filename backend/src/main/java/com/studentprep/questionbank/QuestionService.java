@@ -174,6 +174,50 @@ public class QuestionService implements QuestionInternalAPI {
         evictQuestionsCache();
     }
     
+    @Transactional
+    public void relinkContextsForSubject(UUID subjectId) {
+        List<Question> questions = repository.findByStatusAndSubject_IdOrderByCreatedAtAsc(QuestionStatus.ACTIVE, subjectId);
+        List<Question> drafts = repository.findByStatusAndSubject_IdOrderByCreatedAtAsc(QuestionStatus.DRAFT, subjectId);
+        
+        // Combine both active and draft, sorted by creation time
+        List<Question> allQuestions = new ArrayList<>();
+        allQuestions.addAll(questions);
+        allQuestions.addAll(drafts);
+        allQuestions.sort((a, b) -> a.getCreatedAt().compareTo(b.getCreatedAt()));
+        
+        QuestionContext activeContext = null;
+        
+        for (Question q : allQuestions) {
+            if (q.getContext() != null) {
+                activeContext = q.getContext();
+                continue;
+            }
+            
+            Map<String, Object> content = q.getContent();
+            if (content == null) continue;
+            
+            String sharedContextText = content.get("shared_context") != null 
+                    ? String.valueOf(content.get("shared_context")).trim() : "";
+            boolean isFollowUp = Boolean.TRUE.equals(content.get("is_follow_up"));
+            
+            if (!sharedContextText.isEmpty()) {
+                activeContext = new QuestionContext();
+                activeContext.setSubject(q.getSubject());
+                activeContext.setPassage(sharedContextText);
+                activeContext = contextRepository.save(activeContext);
+                
+                q.setContext(activeContext);
+                repository.save(q);
+            } else if (isFollowUp && activeContext != null) {
+                q.setContext(activeContext);
+                repository.save(q);
+            } else {
+                activeContext = null;
+            }
+        }
+        evictQuestionsCache();
+    }
+    
     private boolean canBeApproved(Question q) {
         Map<String, Object> content = q.getContent();
         if (content == null || !content.containsKey("correctOption")) {

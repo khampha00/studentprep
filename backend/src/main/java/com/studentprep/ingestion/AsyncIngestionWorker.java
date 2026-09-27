@@ -119,6 +119,9 @@ public class AsyncIngestionWorker {
     private void processChunkAsync(IngestionJob job, Subject subject, List<String> chunks, int index, 
                                    QuestionContext currentContext, int retryCount, int rateLimitCount) {
         if (index >= chunks.size()) {
+            // Post-process: retroactively link questions that have shared_context in their JSONB
+            // but no context_id set (because the LLM failed to mark is_follow_up properly)
+            postProcessContextGroups(subject);
             job.setStatus(IngestionJobStatus.COMPLETED);
             jobRepository.save(job);
             return;
@@ -134,19 +137,31 @@ public class AsyncIngestionWorker {
                 
                 QuestionContext nextContext = originalContext;
                 if (structuredQuestions.isArray()) {
+                    // First pass: collect all questions and identify context groups
+                    List<JsonNode> questionNodes = new ArrayList<>();
                     for (JsonNode qNode : structuredQuestions) {
+                        questionNodes.add(qNode);
+                    }
+                    
+                    for (int qi = 0; qi < questionNodes.size(); qi++) {
+                        JsonNode qNode = questionNodes.get(qi);
                         boolean isFollowUp = qNode.path("is_follow_up").asBoolean(false);
-                        if (!isFollowUp) {
-                            nextContext = null;
-                        }
-
-                        if (qNode.hasNonNull("shared_context") && !qNode.path("shared_context").asText().isEmpty()) {
+                        boolean hasSharedContext = qNode.hasNonNull("shared_context") && !qNode.path("shared_context").asText().isEmpty();
+                        
+                        if (hasSharedContext) {
+                            // This question introduces a new shared context
                             nextContext = new QuestionContext();
                             nextContext.setSubject(subject);
                             nextContext.setPassage(qNode.path("shared_context").asText());
                             nextContext = questionContextRepository.save(nextContext);
+                        } else if (!isFollowUp && nextContext != null) {
+                            // Not a follow-up and no shared_context — check if the NEXT question
+                            // has is_follow_up or shared_context pointing to a different group.
+                            // If this question is truly standalone, break the context chain.
+                            nextContext = null;
                         }
-                        
+                        // If isFollowUp is true but no shared_context, keep using nextContext (correct behavior)
+
                         Question q = new Question();
                         q.setStatus(com.studentprep.questionbank.QuestionStatus.DRAFT);
                         q.setSubject(subject);
@@ -187,5 +202,63 @@ public class AsyncIngestionWorker {
                 }
             }
         });
+    }
+
+    /**
+     * Post-processing step: retroactively creates QuestionContext records for questions
+     * that have shared_context text in their JSONB content but no context_id set.
+     * This handles the case where the LLM fails to mark follow-up questions with is_follow_up: true.
+     * 
+     * Logic: Iterate questions in creation order. When a question has shared_context text,
+     * create a QuestionContext and link it. Then link all subsequent questions that have
+     * is_follow_up: true OR have no shared_context of their own (until we hit another
+     * question with a different shared_context or a clear standalone question).
+     */
+    @Transactional
+    public void postProcessContextGroups(Subject subject) {
+        List<Question> questions = questionRepository.findBySubjectOrderByCreatedAtAsc(subject);
+        
+        QuestionContext activeContext = null;
+        
+        for (int i = 0; i < questions.size(); i++) {
+            Question q = questions.get(i);
+            
+            // Skip questions that already have a context linked
+            if (q.getContext() != null) {
+                activeContext = q.getContext();
+                continue;
+            }
+            
+            Map<String, Object> content = q.getContent();
+            if (content == null) continue;
+            
+            String sharedContextText = content.get("shared_context") != null 
+                    ? String.valueOf(content.get("shared_context")).trim() : "";
+            boolean isFollowUp = Boolean.TRUE.equals(content.get("is_follow_up"));
+            
+            if (!sharedContextText.isEmpty()) {
+                // This question introduces a new shared context
+                activeContext = new QuestionContext();
+                activeContext.setSubject(subject);
+                activeContext.setPassage(sharedContextText);
+                activeContext = questionContextRepository.save(activeContext);
+                
+                q.setContext(activeContext);
+                questionRepository.save(q);
+                
+                System.out.println("[PostProcess] Created context " + activeContext.getId() 
+                        + " for question " + q.getId() + " (shared_context found)");
+            } else if (isFollowUp && activeContext != null) {
+                // Follow-up question that should share the previous context
+                q.setContext(activeContext);
+                questionRepository.save(q);
+                
+                System.out.println("[PostProcess] Linked question " + q.getId() 
+                        + " to context " + activeContext.getId() + " (is_follow_up=true)");
+            } else {
+                // Standalone question — break the context chain
+                activeContext = null;
+            }
+        }
     }
 }
