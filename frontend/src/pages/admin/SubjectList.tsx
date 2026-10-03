@@ -85,7 +85,7 @@ export default function SubjectList() {
 
   return (
     <div className="p-8 font-sans">
-      <div className="max-w-7xl mx-auto space-y-8">
+      <div className="w-full max-w-[100vw] mx-auto px-2 lg:px-8 space-y-8">
         <h1 className="text-3xl font-bold text-slate-900">Manage Subjects</h1>
 
         <Card className="border-0 shadow-sm overflow-hidden">
