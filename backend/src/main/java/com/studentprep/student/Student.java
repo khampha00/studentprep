@@ -24,8 +24,7 @@ public class Student {
     @Column(nullable = false)
     private String name;
 
-    @Column(nullable = false, length = 100)
-    private String state;
+
 
     @Column(name = "exam_center")
     private String examCenter;

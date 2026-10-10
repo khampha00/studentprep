@@ -64,7 +64,6 @@ public class StudentAdminController {
                         "name", s.getName(),
                         "registrationNumber", s.getRegistrationNumber(),
                         "pin", s.getPin(),
-                        "state", s.getState(),
                         "examCenter", s.getExamCenter() != null ? s.getExamCenter() : ""
                 )).collect(Collectors.toList());
         PagedResponse<List<Map<String, Object>>> pagedResponse = 
