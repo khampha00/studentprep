@@ -6,7 +6,7 @@ import type { AppDispatch } from '../../store/store';
 import { initializeExam, fetchExamPayload } from '../../store/examSlice';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '../../components/ui/card';
-import { AlertTriangle, BookOpen, Clock, ShieldCheck, PlayCircle, LogOut } from 'lucide-react';
+import { AlertTriangle, BookOpen, Clock, ShieldCheck, PlayCircle, LogOut, FileText } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function Dashboard() {
@@ -65,6 +65,28 @@ export default function Dashboard() {
     } catch (e: any) {
       toast.error(e.message || 'Failed to initialize exam. Please check your connection.');
       setIsLoading(false);
+    }
+  };
+
+  const handleDownloadResultSlip = async (resultId?: string) => {
+    try {
+      toast.info('Generating official result slip PDF...');
+      const url = resultId 
+        ? `/api/v1/students/me/results/${resultId}/slip` 
+        : '/api/v1/students/me/results/latest/slip';
+      const response = await axios.get(url, { responseType: 'blob' });
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.setAttribute('download', `JAMB-Result-Slip-${resultId || 'latest'}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(downloadUrl);
+      toast.success('Result slip downloaded successfully!');
+    } catch (err: any) {
+      toast.error('Failed to download result slip. Please try again.');
     }
   };
 
@@ -183,33 +205,49 @@ export default function Dashboard() {
                 <div className="divide-y divide-slate-100 max-h-[600px] overflow-y-auto">
                   {pastResults.map((result, idx) => (
                     <div key={idx} className="p-5 hover:bg-slate-50 transition-colors">
-                      <div className="flex justify-between items-start mb-3">
+                      <div className="flex justify-between items-start mb-2">
                         <div>
-                          <div className="font-bold text-slate-900">Score: {result.totalScore} / {result.maxScore}</div>
-                          <div className="text-xs text-slate-500 mt-1">{new Date(result.gradedAt).toLocaleString()}</div>
+                          <div className="font-bold text-slate-900 text-base">Score: {result.totalScore} / {result.maxScore}</div>
+                          <div className="text-xs text-slate-500 mt-0.5">{new Date(result.gradedAt).toLocaleString()}</div>
                         </div>
                         <div className="text-right">
                           <span className="inline-block px-2.5 py-1 bg-emerald-100 text-emerald-800 text-xs font-bold rounded-full">
-                            {((result.totalScore / result.maxScore) * 100).toFixed(1)}%
+                            {result.maxScore > 0 ? ((result.totalScore / result.maxScore) * 100).toFixed(1) : 0}%
                           </span>
                         </div>
                       </div>
+
+                      {/* Subject Scores Breakdown */}
+                      {result.subjectScores && Object.keys(result.subjectScores).length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-slate-100">
+                          <div className="text-xs font-semibold text-slate-600 mb-2 uppercase tracking-wider">Subject Scores</div>
+                          <div className="grid grid-cols-2 gap-2">
+                            {Object.entries(result.subjectScores).map(([subject, scores]: [string, any]) => (
+                              <div key={subject} className="bg-slate-50 p-2 rounded border border-slate-200">
+                                <div className="text-xs font-medium text-slate-600 truncate" title={subject}>{subject}</div>
+                                <div className="text-sm font-bold text-slate-900 mt-0.5">{scores[0]} / {scores[1]}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                       
-                      {result.topicBreakdown && (
-                        <div className="mt-4 pt-3 border-t border-slate-100">
-                          <div className="text-xs font-semibold text-slate-600 mb-2 uppercase tracking-wider">Subject Breakdown</div>
-                          <div className="space-y-2">
+                      {/* Topic Breakdown fallback if no subjectScores */}
+                      {(!result.subjectScores || Object.keys(result.subjectScores).length === 0) && result.topicBreakdown && (
+                        <div className="mt-3 pt-3 border-t border-slate-100">
+                          <div className="text-xs font-semibold text-slate-600 mb-2 uppercase tracking-wider">Topic Breakdown</div>
+                          <div className="space-y-1.5">
                             {Object.entries(result.topicBreakdown).map(([topic, stats]: [string, any]) => {
                               const percentage = stats.total > 0 ? (stats.correct / stats.total) * 100 : 0;
                               return (
-                                <div key={topic} className="text-sm">
-                                  <div className="flex justify-between text-slate-700 mb-1">
+                                <div key={topic} className="text-xs">
+                                  <div className="flex justify-between text-slate-700 mb-0.5">
                                     <span className="truncate pr-2" title={topic}>{topic}</span>
-                                    <span className="font-medium shrink-0">{stats.correct}/{stats.total}</span>
+                                    <span className="font-semibold shrink-0">{stats.correct}/{stats.total}</span>
                                   </div>
                                   <div className="w-full bg-slate-200 rounded-full h-1.5">
                                     <div 
-                                      className="bg-blue-600 h-1.5 rounded-full" 
+                                      className="bg-emerald-600 h-1.5 rounded-full" 
                                       style={{ width: `${Math.min(100, Math.max(0, percentage))}%` }}
                                     ></div>
                                   </div>
@@ -219,6 +257,19 @@ export default function Dashboard() {
                           </div>
                         </div>
                       )}
+
+                      {/* Download Result Slip Button */}
+                      <div className="mt-4 pt-3 border-t border-slate-100">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleDownloadResultSlip(result.id)}
+                          className="w-full text-xs font-semibold text-[#008751] border-[#008751]/40 hover:bg-emerald-50 flex items-center justify-center gap-1.5 shadow-xs"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                          Download Result Slip (PDF)
+                        </Button>
+                      </div>
                     </div>
                   ))}
                 </div>

@@ -39,7 +39,7 @@ public class Student {
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;
 
-    @ManyToMany(fetch = FetchType.LAZY)
+    @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(
         name = "student_subjects",
         joinColumns = @JoinColumn(name = "student_id"),

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
 import { toast } from 'sonner';
+import { FileText } from 'lucide-react';
 
 export default function ResultsPage() {
   const [results, setResults] = useState<any[]>([]);
@@ -19,6 +20,25 @@ export default function ResultsPage() {
         setLoading(false);
       });
   }, []);
+
+  const handleDownloadResultSlip = async (resultId: string, studentName: string) => {
+    try {
+      toast.info('Downloading official result slip PDF...');
+      const response = await axios.get(`/api/v1/admin/results/${resultId}/slip`, { responseType: 'blob' });
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.setAttribute('download', `Result-${studentName.replace(/\s+/g, '_')}-${resultId.substring(0, 8)}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(downloadUrl);
+      toast.success('Result slip downloaded!');
+    } catch {
+      toast.error('Failed to download result slip.');
+    }
+  };
 
   return (
     <div className="p-8 font-sans">
@@ -44,12 +64,22 @@ export default function ResultsPage() {
                   <td className="p-4 text-slate-900">{result.totalScore}</td>
                   <td className="p-4 text-slate-900">{result.maxScore}</td>
                   <td className="p-4 text-slate-900">
-                    <button 
-                      onClick={() => setSelectedBreakdown(result.topicBreakdown)}
-                      className="text-white bg-[#008751] hover:bg-[#007040] px-3 py-1 rounded text-sm font-medium"
-                    >
-                      View Breakdown
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={() => setSelectedBreakdown(result.topicBreakdown)}
+                        className="text-white bg-[#008751] hover:bg-[#007040] px-3 py-1 rounded text-sm font-medium cursor-pointer"
+                      >
+                        View Breakdown
+                      </button>
+                      <button 
+                        onClick={() => handleDownloadResultSlip(result.id, result.studentName)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1 bg-white border border-[#008751]/40 text-[#008751] hover:bg-emerald-50 rounded text-sm font-semibold shadow-xs cursor-pointer"
+                        title="Download official examination result slip PDF"
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        Slip (PDF)
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
