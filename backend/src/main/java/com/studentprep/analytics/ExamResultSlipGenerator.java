@@ -72,7 +72,13 @@ public class ExamResultSlipGenerator {
         return subjectScores;
     }
 
-    @Transactional(readOnly = true)
+    public byte[] generateResultSlipPdf(ExamResult result) {
+        if (result == null) {
+            throw new IllegalArgumentException("Exam result cannot be null");
+        }
+        return buildPdf(result);
+    }
+
     public byte[] generateResultSlipPdf(UUID resultId) {
         ExamResult result = examResultRepository.findById(resultId)
                 .orElseThrow(() -> new IllegalArgumentException("Exam result not found for ID: " + resultId));
@@ -80,7 +86,6 @@ public class ExamResultSlipGenerator {
         return buildPdf(result);
     }
 
-    @Transactional(readOnly = true)
     public byte[] generateResultSlipPdfBySessionId(UUID sessionId) {
         ExamResult result = examResultRepository.findByExamSessionId(sessionId)
                 .orElseThrow(() -> new IllegalArgumentException("Exam result not found for session ID: " + sessionId));

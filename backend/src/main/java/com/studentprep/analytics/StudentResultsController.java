@@ -95,7 +95,7 @@ public class StudentResultsController {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied to this result slip");
         }
 
-        byte[] pdfBytes = examResultSlipGenerator.generateResultSlipPdf(resultId);
+        byte[] pdfBytes = examResultSlipGenerator.generateResultSlipPdf(result);
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_PDF);
         headers.setContentDispositionFormData("attachment", "Result-" + student.getRegistrationNumber() + ".pdf");
@@ -113,7 +113,7 @@ public class StudentResultsController {
         ExamResult latestResult = examResultRepository.findFirstByStudentIdOrderByGradedAtDesc(student.getId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No exam results found for candidate"));
 
-        byte[] pdfBytes = examResultSlipGenerator.generateResultSlipPdf(latestResult.getId());
+        byte[] pdfBytes = examResultSlipGenerator.generateResultSlipPdf(latestResult);
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_PDF);
         headers.setContentDispositionFormData("attachment", "Result-" + student.getRegistrationNumber() + "-latest.pdf");
@@ -127,7 +127,7 @@ public class StudentResultsController {
         ExamResult result = examResultRepository.findById(resultId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Exam result not found"));
 
-        byte[] pdfBytes = examResultSlipGenerator.generateResultSlipPdf(resultId);
+        byte[] pdfBytes = examResultSlipGenerator.generateResultSlipPdf(result);
         String regNum = result.getStudent() != null ? result.getStudent().getRegistrationNumber() : resultId.toString();
 
         HttpHeaders headers = new HttpHeaders();
