@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { toast } from 'sonner';
-import { Download, FileText, Key } from 'lucide-react';
+import { Download, FileText, Key, Eye } from 'lucide-react';
+import StudentDetailModal from '../../components/StudentDetailModal';
 
 export default function StudentsPage() {
   const [students, setStudents] = useState<any[]>([]);
@@ -11,6 +12,7 @@ export default function StudentsPage() {
   const [isUploading, setIsUploading] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [showModal, setShowModal] = useState(false);
+  const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
 
   const fetchStudents = () => {
     setLoading(true);
@@ -66,12 +68,12 @@ export default function StudentsPage() {
   };
 
   const handleDownloadTemplate = () => {
-    const header = "Name,State,Exam Center,Subject 1,Subject 2,Subject 3,Subject 4\n";
+    const header = "Name,Exam Center,Subject 1,Subject 2,Subject 3,Subject 4\n";
     // Pick 4 real subjects from the database if available, otherwise sensible defaults
     const subjectsToUse = availableSubjects.length >= 4
       ? availableSubjects.slice(0, 4)
       : [...availableSubjects, 'Mathematics', 'English', 'Biology', 'Chemistry'].slice(0, 4);
-    const sample = `John Doe,Lagos,CBT Center 1,${subjectsToUse.join(',')}\n`;
+    const sample = `John Doe,CBT Center 1,${subjectsToUse.join(',')}\n`;
     const blob = new Blob([header + sample], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -162,7 +164,6 @@ export default function StudentsPage() {
                 <th className="p-4">Candidate Name</th>
                 <th className="p-4">Registration Number</th>
                 <th className="p-4">Login PIN</th>
-                <th className="p-4">State</th>
                 <th className="p-4">Exam Center</th>
                 <th className="p-4 text-right">Registration Slip</th>
               </tr>
@@ -180,17 +181,26 @@ export default function StudentsPage() {
                       {student.pin || '12345'}
                     </span>
                   </td>
-                  <td className="p-4 text-slate-700 text-sm">{student.state}</td>
                   <td className="p-4 text-slate-700 text-sm">{student.examCenter || 'N/A'}</td>
                   <td className="p-4 text-right">
-                    <button
-                      onClick={() => handleDownloadSlip(student.id, student.registrationNumber)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1 bg-white border border-[#008751]/40 text-[#008751] hover:bg-emerald-50 rounded-md text-xs font-semibold shadow-xs transition-colors cursor-pointer"
-                      title="Download printable exam slip PDF"
-                    >
-                      <FileText className="w-3.5 h-3.5" />
-                      Download Slip (PDF)
-                    </button>
+                    <div className="flex justify-end gap-2">
+                      <button
+                        onClick={() => setSelectedStudentId(student.id)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1 bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-md text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+                        title="View student profile and exam history"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        View Profile
+                      </button>
+                      <button
+                        onClick={() => handleDownloadSlip(student.id, student.registrationNumber)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1 bg-white border border-[#008751]/40 text-[#008751] hover:bg-emerald-50 rounded-md text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+                        title="Download printable exam slip PDF"
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        Slip
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -286,6 +296,13 @@ export default function StudentsPage() {
             )}
           </div>
         </div>
+      )}
+
+      {selectedStudentId && (
+        <StudentDetailModal 
+          studentId={selectedStudentId} 
+          onClose={() => setSelectedStudentId(null)} 
+        />
       )}
     </div>
   );

@@ -17,12 +17,12 @@ public class CsvStudentImporter {
 
     private final StudentRepository studentRepository;
     private final SubjectRepository subjectRepository;
-    private final UserRepository userRepository;
+    private final StudentManagementService studentManagementService;
 
-    public CsvStudentImporter(StudentRepository studentRepository, SubjectRepository subjectRepository, UserRepository userRepository) {
+    public CsvStudentImporter(StudentRepository studentRepository, SubjectRepository subjectRepository, StudentManagementService studentManagementService) {
         this.studentRepository = studentRepository;
         this.subjectRepository = subjectRepository;
-        this.userRepository = userRepository;
+        this.studentManagementService = studentManagementService;
     }
 
     private Subject findOrCreateSubject(String name) {
@@ -85,53 +85,35 @@ public class CsvStudentImporter {
                 for (int i = 0; i < parts.length; i++) {
                     parts[i] = parts[i].replaceAll("^\"|\"$", "").replace("\"\"", "\"");
                 }
-                if (parts.length < 7) {
+                if (parts.length < 6) {
                     errors.add("Invalid format: " + line);
                     continue;
                 }
 
                 try {
                     String name = parts[0].trim();
-                    String state = parts[1].trim();
-                    String center = parts[2].trim();
+                    String center = parts[1].trim();
 
                     Set<Subject> subjects = new HashSet<>();
-                    for (int i = 3; i < 7; i++) {
-                        String subjectName = parts[i].trim();
-                        if (subjectName.isEmpty()) continue;
-                        Subject subject = findOrCreateSubject(subjectName);
-                        if (subject != null) {
-                            subjects.add(subject);
+                    for (int i = 2; i < 6; i++) {
+                        if (i < parts.length) {
+                            String subjectName = parts[i].trim();
+                            if (subjectName.isEmpty()) continue;
+                            Subject subject = findOrCreateSubject(subjectName);
+                            if (subject != null) {
+                                subjects.add(subject);
+                            }
                         }
                     }
 
-                    UUID studentId = UUID.randomUUID();
                     Student student = new Student();
-                    student.setId(studentId);
                     student.setName(name);
-                    student.setState(state);
                     student.setExamCenter(center);
                     student.setSubjects(subjects);
 
-                    String rawPin = String.valueOf(10000 + secureRandom.nextInt(90000));
-                    student.setPin(rawPin);
+                    student = studentManagementService.createStudent(student);
 
-                    String regNum;
-                    do {
-                        regNum = generateRegistrationNumber();
-                    } while (studentRepository.existsByRegistrationNumber(regNum));
-
-                    student.setRegistrationNumber(regNum);
-                    studentRepository.save(student);
-
-                    User user = new User();
-                    user.setId(studentId);
-                    user.setIdentifier(regNum);
-                    user.setPin(rawPin);
-                    user.setRole("ROLE_STUDENT");
-                    userRepository.save(user);
-
-                    credentials.add(Map.of("registrationNumber", regNum, "pin", rawPin));
+                    credentials.add(Map.of("registrationNumber", student.getRegistrationNumber(), "pin", student.getPin()));
                     created++;
                 } catch (Exception e) {
                     errors.add("Error processing line '" + line + "': " + e.getMessage());
@@ -162,13 +144,12 @@ public class CsvStudentImporter {
     public byte[] exportStudentsCsv() {
         List<Student> allStudents = studentRepository.findAll();
         StringBuilder sb = new StringBuilder();
-        sb.append("Name,Registration Number,Login PIN,State,Exam Center,Registered Subjects\n");
+        sb.append("Name,Registration Number,Login PIN,Exam Center,Registered Subjects\n");
         for (Student s : allStudents) {
             String subjects = s.getSubjects().stream().map(Subject::getName).collect(Collectors.joining("; "));
             sb.append("\"").append(s.getName() != null ? s.getName().replace("\"", "\"\"") : "").append("\",")
               .append("\"").append(s.getRegistrationNumber()).append("\",")
               .append("\"").append(s.getPin()).append("\",")
-              .append("\"").append(s.getState() != null ? s.getState().replace("\"", "\"\"") : "").append("\",")
               .append("\"").append(s.getExamCenter() != null ? s.getExamCenter().replace("\"", "\"\"") : "").append("\",")
               .append("\"").append(subjects.replace("\"", "\"\"")).append("\"\n");
         }

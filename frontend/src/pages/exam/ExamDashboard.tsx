@@ -215,14 +215,16 @@ export default function ExamDashboard() {
 
       {/* Top bar: Candidate details, Current Subject, Time Remaining */}
       <header className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10 p-4">
-        <div className="max-w-7xl mx-auto flex flex-col lg:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-4 text-sm bg-slate-50 p-2.5 rounded-lg border border-slate-200 shadow-sm w-full lg:w-auto overflow-x-auto">
-             <div className="font-semibold text-slate-900 border-r border-slate-300 pr-4 whitespace-nowrap">Candidate: {exam.student?.name || 'Unknown'}</div>
-             <div className="font-semibold text-slate-900 border-r border-slate-300 pr-4 whitespace-nowrap">Reg No: {exam.student?.registrationNumber || 'Unknown'}</div>
+        <div className="w-full flex flex-col lg:flex-row items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm bg-slate-50 p-2.5 rounded-lg border border-slate-200 shadow-sm w-full lg:w-auto">
+             <div className="font-semibold text-slate-900 whitespace-nowrap">Candidate: {exam.student?.name || 'Unknown'}</div>
+             <div className="hidden sm:block w-px h-4 bg-slate-300"></div>
+             <div className="font-semibold text-slate-900 whitespace-nowrap">Reg No: {exam.student?.registrationNumber || 'Unknown'}</div>
+             <div className="hidden sm:block w-px h-4 bg-slate-300"></div>
              <div className="font-semibold text-slate-900 whitespace-nowrap">Center: {exam.student?.examCenter || 'Unknown'}</div>
           </div>
           
-          <div className="flex items-center gap-2 overflow-x-auto w-full lg:w-auto pb-2 lg:pb-0" role="tablist">
+          <div className="flex items-center gap-2 overflow-x-auto w-full lg:w-auto pb-2 lg:pb-0 scrollbar-none" role="tablist">
             {subjects.map(subject => (
               <Button
                 key={subject.id}
@@ -240,7 +242,7 @@ export default function ExamDashboard() {
             ))}
           </div>
 
-          <div className="flex items-center gap-4 w-full lg:w-auto justify-between lg:justify-end">
+          <div className="flex flex-wrap items-center gap-4 w-full lg:w-auto justify-between lg:justify-end">
             <div className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-full whitespace-nowrap">
               {exam.syncStatus === 'synced' ? <CheckCircle2 className="w-4 h-4 text-primary" /> :
                exam.syncStatus === 'syncing' ? <div className="w-4 h-4 rounded-full border-2 border-primary border-t-transparent animate-spin" /> :
@@ -254,10 +256,10 @@ export default function ExamDashboard() {
         </div>
       </header>
 
-      <main className="flex-1 max-w-7xl mx-auto w-full p-4 lg:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <main className="flex-1 w-full p-4 lg:p-6 grid grid-cols-1 md:grid-cols-12 gap-6">
         
         {/* Left Sidebar: Instructions */}
-        <div className="lg:col-span-3 space-y-4 order-3 lg:order-1">
+        <div className="col-span-12 xl:col-span-3 space-y-4 order-3 xl:order-1">
           <Card className="h-full bg-slate-50 flex flex-col">
             <CardHeader className="pb-3 border-b bg-slate-50">
               <CardTitle className="text-sm font-bold uppercase tracking-wider text-slate-600">Instructions</CardTitle>
@@ -276,7 +278,7 @@ export default function ExamDashboard() {
         </div>
 
         {/* Center Area: Current Question */}
-        <div className="lg:col-span-6 flex flex-col order-1 lg:order-2">
+        <div className="col-span-12 md:col-span-8 xl:col-span-6 flex flex-col order-1 xl:order-2">
           <Card className="p-0 overflow-hidden flex flex-col flex-1 shadow-sm bg-slate-50 min-h-[500px]">
             <CardHeader className="flex flex-row justify-between items-center mb-0 border-b p-4 bg-slate-50 shrink-0">
               <CardTitle className="text-lg font-bold text-slate-800">
@@ -348,7 +350,7 @@ export default function ExamDashboard() {
         </div>
 
         {/* Right Sidebar: Navigation Grid */}
-        <div className="lg:col-span-3 space-y-6 order-2 lg:order-3">
+        <div className="col-span-12 md:col-span-4 xl:col-span-3 space-y-6 order-2 xl:order-3">
           <Card className="h-full flex flex-col bg-slate-50">
             <CardHeader className="pb-3 border-b flex flex-row items-center justify-between bg-slate-50">
               <CardTitle className="text-sm font-bold uppercase tracking-wider text-slate-600">Navigation</CardTitle>

@@ -32,7 +32,7 @@ public class RegistrationSlipGenerator {
         details.put("registrationNumber", student.getRegistrationNumber());
         details.put("pin", student.getPin());
         details.put("examCenter", student.getExamCenter());
-        details.put("state", student.getState());
+
         details.put("subjects", student.getSubjects().stream().map(Subject::getName).toList());
         
         return details;
@@ -53,7 +53,7 @@ public class RegistrationSlipGenerator {
             document.add(new Paragraph("Candidate Name: " + student.getName()));
             document.add(new Paragraph("Registration Number: " + student.getRegistrationNumber()));
             document.add(new Paragraph("Login PIN: " + student.getPin()));
-            document.add(new Paragraph("State: " + student.getState()));
+
             document.add(new Paragraph("Exam Center: " + (student.getExamCenter() != null ? student.getExamCenter() : "Main Center")));
             
             String subjects = student.getSubjects().stream()

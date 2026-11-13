@@ -249,7 +249,7 @@ export default function SubjectDetail() {
 
   return (
     <div className="p-8 font-sans">
-      <div className="max-w-7xl mx-auto space-y-8">
+      <div className="w-full max-w-[100vw] mx-auto px-2 lg:px-8 space-y-8">
         <div className="flex items-center gap-4">
           <Button variant="outline" onClick={() => navigate('/admin/subjects')}>&larr; Back</Button>
           <h1 className="text-1.5xl font-bold text-slate-900">{subject.name}</h1>

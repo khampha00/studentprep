@@ -24,8 +24,7 @@ public class Student {
     @Column(nullable = false)
     private String name;
 
-    @Column(nullable = false, length = 100)
-    private String state;
+
 
     @Column(name = "exam_center")
     private String examCenter;
@@ -40,7 +39,7 @@ public class Student {
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;
 
-    @ManyToMany(fetch = FetchType.LAZY)
+    @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(
         name = "student_subjects",
         joinColumns = @JoinColumn(name = "student_id"),

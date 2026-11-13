@@ -19,14 +19,53 @@ import java.util.stream.Collectors;
 @RequestMapping("/api/v1/admin/students")
 public class StudentAdminController {
 
+    private final StudentManagementService studentManagementService;
     private final CsvStudentImporter csvStudentImporter;
     private final RegistrationSlipGenerator registrationSlipGenerator;
     private final StudentRepository studentRepository;
 
-    public StudentAdminController(CsvStudentImporter csvStudentImporter, RegistrationSlipGenerator registrationSlipGenerator, StudentRepository studentRepository) {
+    public StudentAdminController(CsvStudentImporter csvStudentImporter, RegistrationSlipGenerator registrationSlipGenerator, StudentRepository studentRepository, StudentManagementService studentManagementService) {
         this.csvStudentImporter = csvStudentImporter;
         this.registrationSlipGenerator = registrationSlipGenerator;
         this.studentRepository = studentRepository;
+        this.studentManagementService = studentManagementService;
+    }
+
+    @PostMapping
+    public ResponseEntity<ApiResponse<Student>> createStudent(@RequestBody Student student) {
+        Student created = studentManagementService.createStudent(student);
+        return ResponseEntity.ok(ApiResponse.of(created));
+    }
+
+    @PutMapping("/{id}")
+    public ResponseEntity<ApiResponse<Student>> updateStudent(@PathVariable UUID id, @RequestBody Student student) {
+        Student updated = studentManagementService.updateStudent(id, student);
+        return ResponseEntity.ok(ApiResponse.of(updated));
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<ApiResponse<Void>> deleteStudent(@PathVariable UUID id) {
+        studentManagementService.deleteStudent(id);
+        return ResponseEntity.ok(ApiResponse.of(null));
+    }
+
+    @PostMapping("/{id}/reset-pin")
+    public ResponseEntity<ApiResponse<Map<String, String>>> resetPin(@PathVariable UUID id) {
+        String newPin = studentManagementService.resetPin(id);
+        return ResponseEntity.ok(ApiResponse.of(Map.of("newPin", newPin)));
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getStudent(@PathVariable UUID id) {
+        Student student = studentRepository.findById(id).orElseThrow(() -> new IllegalArgumentException("Not found"));
+        return ResponseEntity.ok(ApiResponse.of(Map.of(
+            "id", student.getId(),
+            "name", student.getName(),
+            "registrationNumber", student.getRegistrationNumber(),
+            "examCenter", student.getExamCenter() != null ? student.getExamCenter() : "",
+            "pin", student.getPin(),
+            "subjects", student.getSubjects()
+        )));
     }
 
     @PostMapping("/bulk")
@@ -64,7 +103,6 @@ public class StudentAdminController {
                         "name", s.getName(),
                         "registrationNumber", s.getRegistrationNumber(),
                         "pin", s.getPin(),
-                        "state", s.getState(),
                         "examCenter", s.getExamCenter() != null ? s.getExamCenter() : ""
                 )).collect(Collectors.toList());
         PagedResponse<List<Map<String, Object>>> pagedResponse = 

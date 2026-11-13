@@ -6,7 +6,7 @@ import type { AppDispatch } from '../../store/store';
 import { initializeExam, fetchExamPayload } from '../../store/examSlice';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '../../components/ui/card';
-import { AlertTriangle, BookOpen, Clock, ShieldCheck, PlayCircle } from 'lucide-react';
+import { AlertTriangle, BookOpen, Clock, ShieldCheck, PlayCircle, LogOut, FileText } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function Dashboard() {
@@ -14,6 +14,8 @@ export default function Dashboard() {
   const dispatch = useDispatch<AppDispatch>();
   const [isLoading, setIsLoading] = useState(false);
   const [hasActiveExam, setHasActiveExam] = useState(false);
+  const [pastResults, setPastResults] = useState<any[]>([]);
+  const [loadingResults, setLoadingResults] = useState(true);
 
   useEffect(() => {
     let isMounted = true;
@@ -30,7 +32,23 @@ export default function Dashboard() {
       }
     };
 
+    const fetchPastResults = async () => {
+      try {
+        setLoadingResults(true);
+        const res = await axios.get('/api/v1/students/me/results');
+        if (isMounted && res.data?.data) {
+          setPastResults(res.data.data);
+        }
+      } catch (err) {
+        // Ignore or handle silently
+      } finally {
+        if (isMounted) setLoadingResults(false);
+      }
+    };
+
     checkActiveSession();
+    fetchPastResults();
+    
     const interval = setInterval(checkActiveSession, 10000);
     return () => {
       isMounted = false;
@@ -50,6 +68,28 @@ export default function Dashboard() {
     }
   };
 
+  const handleDownloadResultSlip = async (resultId?: string) => {
+    try {
+      toast.info('Generating official result slip PDF...');
+      const url = resultId 
+        ? `/api/v1/students/me/results/${resultId}/slip` 
+        : '/api/v1/students/me/results/latest/slip';
+      const response = await axios.get(url, { responseType: 'blob' });
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.setAttribute('download', `JAMB-Result-Slip-${resultId || 'latest'}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(downloadUrl);
+      toast.success('Result slip downloaded successfully!');
+    } catch (err: any) {
+      toast.error('Failed to download result slip. Please try again.');
+    }
+  };
+
   const handleLogout = async () => {
     try {
       await axios.post('/api/v1/auth/logout', {}, { withCredentials: true });
@@ -61,80 +101,184 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-      <Card className="max-w-3xl w-full bg-white shadow-md border-t-4 border-t-primary">
-        <CardHeader className="text-center pb-6 border-b border-slate-100">
-          <CardTitle className="text-3xl font-bold text-slate-900">Student Dashboard</CardTitle>
-          <CardDescription className="text-base text-slate-600 mt-2">
-            Welcome to your examination portal. Please read the instructions below before starting.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="py-8 px-6 md:px-10">
-          <div className="grid md:grid-cols-2 gap-8 mb-8">
-            <div className="flex items-start gap-4">
-              <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
-                <Clock className="text-blue-700 w-5 h-5" />
+    <div className="min-h-screen bg-slate-100 flex flex-col">
+      <header className="bg-white border-b px-6 py-4 flex justify-between items-center shadow-sm">
+        <div>
+          <h1 className="text-xl font-bold text-[#008751]">StudentPrep</h1>
+        </div>
+        <Button variant="outline" size="sm" onClick={handleLogout} className="text-slate-600">
+          <LogOut className="w-4 h-4 mr-2" />
+          Logout
+        </Button>
+      </header>
+
+      <main className="flex-1 w-full mx-auto px-4 lg:px-8 py-8 grid grid-cols-1 xl:grid-cols-12 gap-8">
+        
+        {/* Left Column: Exam Portal */}
+        <div className="xl:col-span-8">
+          <Card className="w-full bg-white shadow-sm border-t-4 border-t-[#008751]">
+            <CardHeader className="pb-6 border-b border-slate-100">
+              <CardTitle className="text-2xl font-bold text-slate-900">Examination Portal</CardTitle>
+              <CardDescription className="text-base text-slate-600 mt-2">
+                Please read the instructions carefully before starting your examination.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="py-8 px-6 md:px-10">
+              <div className="grid md:grid-cols-2 gap-8 mb-8">
+                <div className="flex items-start gap-4">
+                  <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
+                    <Clock className="text-blue-700 w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900 mb-1">Time Limit</h3>
+                    <p className="text-sm text-slate-600">You have exactly 2 hours to complete all subjects. The timer will start automatically.</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-4">
+                  <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center shrink-0">
+                    <BookOpen className="text-purple-700 w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900 mb-1">Enrolled Subjects</h3>
+                    <p className="text-sm text-slate-600">The exam engine will dynamically load questions based on your enrolled subjects.</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-4">
+                  <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center shrink-0">
+                    <AlertTriangle className="text-red-700 w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900 mb-1">Anti-Malpractice</h3>
+                    <p className="text-sm text-slate-600">Do not switch tabs or minimize the window. You are allowed a maximum of 3 warnings.</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-4">
+                  <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
+                    <ShieldCheck className="text-emerald-700 w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900 mb-1">Offline Resilience</h3>
+                    <p className="text-sm text-slate-600">If you lose connection, continue writing. The system will sync when you are back online.</p>
+                  </div>
+                </div>
               </div>
-              <div>
-                <h3 className="font-bold text-slate-900 mb-1">Time Limit</h3>
-                <p className="text-sm text-slate-600">You have exactly 2 hours to complete all subjects. The timer will start automatically.</p>
-              </div>
-            </div>
-            <div className="flex items-start gap-4">
-              <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center shrink-0">
-                <BookOpen className="text-purple-700 w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="font-bold text-slate-900 mb-1">Enrolled Subjects</h3>
-                <p className="text-sm text-slate-600">The exam engine will dynamically load questions based on your enrolled subjects.</p>
-              </div>
-            </div>
-            <div className="flex items-start gap-4">
-              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center shrink-0">
-                <AlertTriangle className="text-red-700 w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="font-bold text-slate-900 mb-1">Anti-Malpractice</h3>
-                <p className="text-sm text-slate-600">Do not switch tabs or minimize the window. You are allowed a maximum of 3 warnings.</p>
-              </div>
-            </div>
-            <div className="flex items-start gap-4">
-              <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
-                <ShieldCheck className="text-emerald-700 w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="font-bold text-slate-900 mb-1">Offline Resilience</h3>
-                <p className="text-sm text-slate-600">If you lose connection, continue writing. The system will sync when you are back online.</p>
-              </div>
-            </div>
-          </div>
-          
-          {hasActiveExam && (
-            <div className="mb-6 bg-emerald-50 border-2 border-[#008751] p-4 rounded-lg flex items-start gap-3">
-              <PlayCircle className="text-[#008751] w-5 h-5 shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-bold text-slate-900">Active Examination In Progress</p>
-                <p className="text-xs text-slate-700 mt-0.5">
-                  You have an unfinished examination attempt. Click <strong>Resume Examination</strong> below to continue your session. Your timer and saved answers are preserved.
+              
+              {hasActiveExam && (
+                <div className="mb-6 bg-emerald-50 border-2 border-[#008751] p-4 rounded-lg flex items-start gap-3">
+                  <PlayCircle className="text-[#008751] w-5 h-5 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-bold text-slate-900">Active Examination In Progress</p>
+                    <p className="text-xs text-slate-700 mt-0.5">
+                      You have an unfinished examination attempt. Click <strong>Resume Examination</strong> below to continue your session. Your timer and saved answers are preserved.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <div className="bg-amber-50 border border-amber-200 p-4 rounded-lg flex items-start gap-3">
+                <AlertTriangle className="text-amber-600 w-5 h-5 shrink-0 mt-0.5" />
+                <p className="text-sm text-amber-800">
+                  <strong>Declaration:</strong> By starting this examination, you agree to abide by all rules and regulations. Any form of malpractice will lead to automatic disqualification.
                 </p>
               </div>
-            </div>
-          )}
+            </CardContent>
+            <CardFooter className="flex justify-end border-t border-slate-100 bg-slate-50 p-6 rounded-b-xl">
+              <Button onClick={handleStartExam} disabled={isLoading} aria-label="Start Examination" className="px-8 font-bold bg-[#008751] hover:bg-[#007040] text-white">
+                {isLoading ? 'Preparing Exam...' : hasActiveExam ? 'Resume Examination' : 'Start Examination'}
+              </Button>
+            </CardFooter>
+          </Card>
+        </div>
 
-          <div className="bg-amber-50 border border-amber-200 p-4 rounded-lg flex items-start gap-3">
-            <AlertTriangle className="text-amber-600 w-5 h-5 shrink-0 mt-0.5" />
-            <p className="text-sm text-amber-800">
-              <strong>Declaration:</strong> By starting this examination, you agree to abide by all rules and regulations. Any form of malpractice will lead to automatic disqualification.
-            </p>
-          </div>
-        </CardContent>
-        <CardFooter className="flex justify-between border-t border-slate-100 bg-slate-50 p-6 rounded-b-xl">
-          <Button variant="outline" onClick={handleLogout}>Logout</Button>
-          <Button onClick={handleStartExam} disabled={isLoading} aria-label="Start Examination" className="px-8 font-bold">
-            {isLoading ? 'Preparing Exam...' : hasActiveExam ? 'Resume Examination' : 'Start Examination'}
-          </Button>
-        </CardFooter>
-      </Card>
+        {/* Right Column: Past Results */}
+        <div className="xl:col-span-4 space-y-6">
+          <Card className="bg-white shadow-sm">
+            <CardHeader className="border-b border-slate-100 pb-4">
+              <CardTitle className="text-lg font-bold text-slate-900">My Past Results</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              {loadingResults ? (
+                <div className="p-6 text-sm text-slate-500">Loading results...</div>
+              ) : pastResults.length === 0 ? (
+                <div className="p-6 text-sm text-slate-500">You have not completed any exams yet.</div>
+              ) : (
+                <div className="divide-y divide-slate-100 max-h-[600px] overflow-y-auto">
+                  {pastResults.map((result, idx) => (
+                    <div key={idx} className="p-5 hover:bg-slate-50 transition-colors">
+                      <div className="flex justify-between items-start mb-2">
+                        <div>
+                          <div className="font-bold text-slate-900 text-base">Score: {result.totalScore} / {result.maxScore}</div>
+                          <div className="text-xs text-slate-500 mt-0.5">{new Date(result.gradedAt).toLocaleString()}</div>
+                        </div>
+                        <div className="text-right">
+                          <span className="inline-block px-2.5 py-1 bg-emerald-100 text-emerald-800 text-xs font-bold rounded-full">
+                            {result.maxScore > 0 ? ((result.totalScore / result.maxScore) * 100).toFixed(1) : 0}%
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Subject Scores Breakdown */}
+                      {result.subjectScores && Object.keys(result.subjectScores).length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-slate-100">
+                          <div className="text-xs font-semibold text-slate-600 mb-2 uppercase tracking-wider">Subject Scores</div>
+                          <div className="grid grid-cols-2 gap-2">
+                            {Object.entries(result.subjectScores).map(([subject, scores]: [string, any]) => (
+                              <div key={subject} className="bg-slate-50 p-2 rounded border border-slate-200">
+                                <div className="text-xs font-medium text-slate-600 truncate" title={subject}>{subject}</div>
+                                <div className="text-sm font-bold text-slate-900 mt-0.5">{scores[0]} / {scores[1]}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Topic Breakdown fallback if no subjectScores */}
+                      {(!result.subjectScores || Object.keys(result.subjectScores).length === 0) && result.topicBreakdown && (
+                        <div className="mt-3 pt-3 border-t border-slate-100">
+                          <div className="text-xs font-semibold text-slate-600 mb-2 uppercase tracking-wider">Topic Breakdown</div>
+                          <div className="space-y-1.5">
+                            {Object.entries(result.topicBreakdown).map(([topic, stats]: [string, any]) => {
+                              const percentage = stats.total > 0 ? (stats.correct / stats.total) * 100 : 0;
+                              return (
+                                <div key={topic} className="text-xs">
+                                  <div className="flex justify-between text-slate-700 mb-0.5">
+                                    <span className="truncate pr-2" title={topic}>{topic}</span>
+                                    <span className="font-semibold shrink-0">{stats.correct}/{stats.total}</span>
+                                  </div>
+                                  <div className="w-full bg-slate-200 rounded-full h-1.5">
+                                    <div 
+                                      className="bg-emerald-600 h-1.5 rounded-full" 
+                                      style={{ width: `${Math.min(100, Math.max(0, percentage))}%` }}
+                                    ></div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Download Result Slip Button */}
+                      <div className="mt-4 pt-3 border-t border-slate-100">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleDownloadResultSlip(result.id)}
+                          className="w-full text-xs font-semibold text-[#008751] border-[#008751]/40 hover:bg-emerald-50 flex items-center justify-center gap-1.5 shadow-xs"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                          Download Result Slip (PDF)
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+      </main>
     </div>
   );
 }
