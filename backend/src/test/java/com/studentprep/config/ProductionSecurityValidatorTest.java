@@ -29,6 +29,8 @@ class ProductionSecurityValidatorTest {
 
     private static final String VALID_JWT_SECRET =
             "9f8e7d6c5b4a392817263544536271809f8e7d6c5b4a39281726354453627180";
+    private static final String VALID_CREDENTIAL_KEY =
+            "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809";
     private static final String VALID_ADMIN_SECRET = "ProdBootstrap#2026!Secure";
     private static final String VALID_ARGON2_HASH =
             "$argon2id$v=19$m=16384,t=2,p=1$rqXBKJfgPQ9gL6sh+pULog$80vfQbWJEHWH3ehXW4YmhHZN8HGNDR/i9PsKYdA87bU";
@@ -50,6 +52,7 @@ class ProductionSecurityValidatorTest {
 
             runner.withPropertyValues(
                             "security.jwt.secret=super_secret_jwt_key_for_local_development_only_do_not_use_in_prod",
+                            "security.credential-vault.key=local_dev_credential_vault_key_change_in_prod",
                             "security.bootstrap.admin-secret=admin123",
                             "cors.allowed-origins=*",
                             "security.cookie.secure=false",
@@ -70,6 +73,7 @@ class ProductionSecurityValidatorTest {
                 .withPropertyValues(
                         "spring.profiles.active=prod",
                         "security.jwt.secret=" + VALID_JWT_SECRET,
+                        "security.credential-vault.key=" + VALID_CREDENTIAL_KEY,
                         "security.bootstrap.admin-secret=" + VALID_ADMIN_SECRET,
                         "cors.allowed-origins=https://exam.school.edu.ng,https://admin.school.edu.ng:8443",
                         "security.cookie.secure=true",
@@ -93,6 +97,7 @@ class ProductionSecurityValidatorTest {
                 .withPropertyValues(
                         "spring.profiles.active=prod",
                         "security.jwt.secret=" + VALID_JWT_SECRET,
+                        "security.credential-vault.key=" + VALID_CREDENTIAL_KEY,
                         "security.bootstrap.admin-secret=",
                         "cors.allowed-origins=https://exam.school.edu.ng",
                         "security.cookie.secure=true",
@@ -112,6 +117,7 @@ class ProductionSecurityValidatorTest {
                 .withPropertyValues(
                         "spring.profiles.active=prod",
                         "security.jwt.secret=super_secret_jwt_key_for_local_development_only_do_not_use_in_prod",
+                        "security.credential-vault.key=" + VALID_CREDENTIAL_KEY,
                         "security.bootstrap.admin-secret=" + VALID_ADMIN_SECRET,
                         "cors.allowed-origins=https://exam.school.edu.ng",
                         "security.cookie.secure=true",
@@ -123,6 +129,27 @@ class ProductionSecurityValidatorTest {
                     assertThat(context).hasFailed();
                     assertThat(context.getStartupFailure())
                             .hasMessageContaining("security.jwt.secret");
+                });
+    }
+
+    @Test
+    void prodProfile_FailsFastDuringContextStartupWhenCredentialVaultKeyUsesDevDefault() {
+        contextRunner
+                .withPropertyValues(
+                        "spring.profiles.active=prod",
+                        "security.jwt.secret=" + VALID_JWT_SECRET,
+                        "security.credential-vault.key=local_dev_credential_vault_key_change_in_prod",
+                        "security.bootstrap.admin-secret=" + VALID_ADMIN_SECRET,
+                        "cors.allowed-origins=https://exam.school.edu.ng",
+                        "security.cookie.secure=true",
+                        "docling.api-key=docling_prod_key_83920194810",
+                        "s3.accessKey=prod_s3_access_user",
+                        "s3.secretKey=prod_s3_secret_key_948102"
+                )
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .hasMessageContaining("security.credential-vault.key");
                 });
     }
 
@@ -153,6 +180,51 @@ class ProductionSecurityValidatorTest {
         MockEnvironment exactBoundaryEnv = validProdEnvironment();
         exactBoundaryEnv.setProperty("security.jwt.secret", "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6");
         assertThatCode(() -> createValidator(exactBoundaryEnv, null).validate())
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void validate_RejectsMissingShortDevDefaultPlaceholderAndLowEntropyCredentialVaultKeys() {
+        MockEnvironment missingEnv = validProdEnvironmentWithoutCredentialKey();
+        assertThatThrownBy(() -> createValidator(missingEnv, null).validate())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("security.credential-vault.key");
+
+        List<String> badCredentialKeys = List.of(
+                "",
+                "   ",
+                "short_vault_key_under_32_bytes!",
+                "1234567890123456789012345678901",
+                "éàèùçôA1b2C3d4E5f6G7h8I9j",
+                "local_dev_credential_vault_key_change_in_prod",
+                "test_only_credential_vault_key_at_least_32_bytes_long",
+                "your_credential_vault_key_that_is_at_least_32_bytes",
+                "changeme_credential_vault_key_for_prod",
+                "placeholder_credential_vault_key_for_prod",
+                "custom_key_change_in_prod_12345678901234",
+                "local_dev_custom_vault_key_987654321012345",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "12345123451234512345123451234512"
+        );
+
+        for (String badKey : badCredentialKeys) {
+            MockEnvironment env = validProdEnvironment();
+            env.setProperty("security.credential-vault.key", badKey);
+            ProductionSecurityValidator validator = createValidator(env, null);
+
+            assertThatThrownBy(validator::validate)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("security.credential-vault.key");
+        }
+
+        MockEnvironment exactAsciiBoundaryEnv = validProdEnvironment();
+        exactAsciiBoundaryEnv.setProperty("security.credential-vault.key", "Z9y8X7w6V5u4T3s2R1q0P9o8N7m6L5k4");
+        assertThatCode(() -> createValidator(exactAsciiBoundaryEnv, null).validate())
+                .doesNotThrowAnyException();
+
+        MockEnvironment exactUtf8BoundaryEnv = validProdEnvironment();
+        exactUtf8BoundaryEnv.setProperty("security.credential-vault.key", "éàèùçôA1b2C3d4E5f6G7h8I9j0");
+        assertThatCode(() -> createValidator(exactUtf8BoundaryEnv, null).validate())
                 .doesNotThrowAnyException();
     }
 
@@ -282,6 +354,7 @@ class ProductionSecurityValidatorTest {
     @Test
     void validate_NeverLogsOrIncludesActualSecretValuesInExceptionsOrLogs() {
         String sentinelJwt = "your_weak_jwt_secret_sentinel_value_999";
+        String sentinelCredentialKey = "your_weak_credential_vault_key_sentinel_555";
         String sentinelAdmin = "your_weak_admin_secret_sentinel_888";
         String sentinelDocling = "your_docling_api_key_sentinel_777";
         String sentinelS3Access = "minioadmin";
@@ -289,6 +362,7 @@ class ProductionSecurityValidatorTest {
 
         MockEnvironment env = new MockEnvironment()
                 .withProperty("security.jwt.secret", sentinelJwt)
+                .withProperty("security.credential-vault.key", sentinelCredentialKey)
                 .withProperty("security.bootstrap.admin-secret", sentinelAdmin)
                 .withProperty("cors.allowed-origins", "*")
                 .withProperty("security.cookie.secure", "false")
@@ -309,6 +383,7 @@ class ProductionSecurityValidatorTest {
                         String message = ex.getMessage();
                         assertThat(message)
                                 .contains("security.jwt.secret")
+                                .contains("security.credential-vault.key")
                                 .contains("security.bootstrap.admin-secret")
                                 .contains("cors.allowed-origins")
                                 .contains("security.cookie.secure")
@@ -317,6 +392,7 @@ class ProductionSecurityValidatorTest {
                                 .contains("s3.secretKey");
                         assertThat(message)
                                 .doesNotContain(sentinelJwt)
+                                .doesNotContain(sentinelCredentialKey)
                                 .doesNotContain(sentinelAdmin)
                                 .doesNotContain(sentinelDocling)
                                 .doesNotContain(sentinelS3Secret);
@@ -327,6 +403,7 @@ class ProductionSecurityValidatorTest {
                 String formatted = event.getFormattedMessage();
                 assertThat(formatted)
                         .doesNotContain(sentinelJwt)
+                        .doesNotContain(sentinelCredentialKey)
                         .doesNotContain(sentinelAdmin)
                         .doesNotContain(sentinelDocling)
                         .doesNotContain(sentinelS3Secret);
@@ -337,6 +414,11 @@ class ProductionSecurityValidatorTest {
     }
 
     private static MockEnvironment validProdEnvironment() {
+        return validProdEnvironmentWithoutCredentialKey()
+                .withProperty("security.credential-vault.key", VALID_CREDENTIAL_KEY);
+    }
+
+    private static MockEnvironment validProdEnvironmentWithoutCredentialKey() {
         return new MockEnvironment()
                 .withProperty("security.jwt.secret", VALID_JWT_SECRET)
                 .withProperty("security.bootstrap.admin-secret", VALID_ADMIN_SECRET)

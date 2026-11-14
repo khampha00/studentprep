@@ -7,7 +7,6 @@ public record CreatedStudentResponse(
         UUID id,
         String name,
         String registrationNumber,
-        String examCenter,
         List<SubjectSummaryResponse> subjects,
         String oneTimePin) {
 }

@@ -262,7 +262,6 @@ class AuthRateLimitingIntegrationTest {
 
         Student student = new Student();
         student.setName("Rate Limit Candidate");
-        student.setExamCenter("Center R");
         student.setRegistrationNumber(regNumber);
         student.setPinHash(hash);
         student.setPinResetRequired(false);

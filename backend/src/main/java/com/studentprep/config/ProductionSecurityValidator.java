@@ -35,8 +35,8 @@ public class ProductionSecurityValidator implements SmartInitializingSingleton {
 
     private static final Logger log = LoggerFactory.getLogger(ProductionSecurityValidator.class);
 
-    private static final int MIN_JWT_SECRET_BYTES = 32;
-    private static final int MIN_JWT_DISTINCT_CHARS = 6;
+    private static final int MIN_SECRET_BYTES = 32;
+    private static final int MIN_SECRET_DISTINCT_CHARS = 6;
     private static final int MIN_ADMIN_SECRET_CHARS = 12;
     private static final int MIN_ADMIN_DISTINCT_CHARS = 5;
 
@@ -57,6 +57,17 @@ public class ProductionSecurityValidator implements SmartInitializingSingleton {
             "change_me",
             "placeholder",
             "default"
+    );
+
+    private static final Set<String> KNOWN_DEV_CREDENTIAL_KEYS = Set.of(
+            "local_dev_credential_vault_key_change_in_prod",
+            "test_only_credential_vault_key_at_least_32_bytes_long",
+            "secret",
+            "changeme",
+            "change_me",
+            "placeholder",
+            "default",
+            "replace_me"
     );
 
     private static final Set<String> WEAK_ADMIN_SECRETS = Set.of(
@@ -132,6 +143,7 @@ public class ProductionSecurityValidator implements SmartInitializingSingleton {
         List<String> violations = new ArrayList<>();
 
         validateJwtSecret(violations);
+        validateCredentialVaultKey(violations);
         validateAdminBootstrapSecret(violations);
         validateCorsAllowedOrigins(violations);
         validateCookieSecure(violations);
@@ -148,24 +160,44 @@ public class ProductionSecurityValidator implements SmartInitializingSingleton {
     }
 
     private void validateJwtSecret(List<String> violations) {
-        String raw = resolveProperty("security.jwt.secret", violations);
+        validateHighEntropySecret(
+                "security.jwt.secret",
+                "JWT_SECRET",
+                KNOWN_DEV_JWT_SECRETS,
+                violations);
+    }
+
+    private void validateCredentialVaultKey(List<String> violations) {
+        validateHighEntropySecret(
+                "security.credential-vault.key",
+                "CREDENTIAL_ENCRYPTION_KEY",
+                KNOWN_DEV_CREDENTIAL_KEYS,
+                violations);
+    }
+
+    private void validateHighEntropySecret(
+            String propertyName,
+            String envVarName,
+            Set<String> knownDevSecrets,
+            List<String> violations) {
+        String raw = resolveProperty(propertyName, violations);
         if (raw == null || raw.isBlank()) {
-            violations.add("security.jwt.secret (JWT_SECRET) must not be missing or blank in prod");
+            violations.add(propertyName + " (" + envVarName + ") must not be missing or blank in prod");
             return;
         }
 
         String trimmed = raw.trim();
         String lower = trimmed.toLowerCase(Locale.ROOT);
-        if (trimmed.getBytes(StandardCharsets.UTF_8).length < MIN_JWT_SECRET_BYTES) {
-            violations.add("security.jwt.secret (JWT_SECRET) must be at least 32 UTF-8 bytes in prod");
+        if (trimmed.getBytes(StandardCharsets.UTF_8).length < MIN_SECRET_BYTES) {
+            violations.add(propertyName + " (" + envVarName + ") must be at least 32 UTF-8 bytes in prod");
             return;
         }
-        if (KNOWN_DEV_JWT_SECRETS.contains(lower) || hasPlaceholderPattern(lower)) {
-            violations.add("security.jwt.secret (JWT_SECRET) must not use a dev, test, or placeholder value in prod");
+        if (knownDevSecrets.contains(lower) || hasPlaceholderPattern(lower)) {
+            violations.add(propertyName + " (" + envVarName + ") must not use a dev, test, or placeholder value in prod");
             return;
         }
-        if (trimmed.chars().distinct().count() < MIN_JWT_DISTINCT_CHARS) {
-            violations.add("security.jwt.secret (JWT_SECRET) has insufficient character entropy for prod");
+        if (trimmed.chars().distinct().count() < MIN_SECRET_DISTINCT_CHARS) {
+            violations.add(propertyName + " (" + envVarName + ") has insufficient character entropy for prod");
         }
     }
 
@@ -293,6 +325,7 @@ public class ProductionSecurityValidator implements SmartInitializingSingleton {
     private static boolean hasPlaceholderPattern(String lowerTrimmed) {
         return lowerTrimmed.startsWith("your_")
                 || lowerTrimmed.startsWith("your-")
+                || lowerTrimmed.startsWith("local_dev_")
                 || lowerTrimmed.startsWith("placeholder")
                 || lowerTrimmed.startsWith("changeme")
                 || lowerTrimmed.startsWith("change_me")
@@ -302,6 +335,7 @@ public class ProductionSecurityValidator implements SmartInitializingSingleton {
                 || lowerTrimmed.startsWith("example-")
                 || (lowerTrimmed.startsWith("<") && lowerTrimmed.endsWith(">"))
                 || lowerTrimmed.contains("do_not_use_in_prod")
+                || lowerTrimmed.contains("change_in_prod")
                 || lowerTrimmed.contains("for_local_development")
                 || lowerTrimmed.contains("changeme")
                 || lowerTrimmed.contains("change_me")

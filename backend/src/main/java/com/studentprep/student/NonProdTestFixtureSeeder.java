@@ -26,12 +26,13 @@ public class NonProdTestFixtureSeeder implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(NonProdTestFixtureSeeder.class);
     private static final String DEV_SUPERVISOR_ID = "SUPERVISOR-001";
-    private static final String DEV_STUDENT_REG = "JAMB-2026-DEMO01";
+    private static final String DEV_STUDENT_REG = "123456JF";
 
     private final UserRepository userRepository;
     private final StudentRepository studentRepository;
     private final SubjectRepository subjectRepository;
     private final PasswordEncoder passwordEncoder;
+    private final StudentPinCryptoService pinCryptoService;
     private final String devSupervisorPin;
     private final String devStudentPin;
 
@@ -40,12 +41,14 @@ public class NonProdTestFixtureSeeder implements ApplicationRunner {
             StudentRepository studentRepository,
             SubjectRepository subjectRepository,
             PasswordEncoder passwordEncoder,
+            StudentPinCryptoService pinCryptoService,
             @Value("${security.bootstrap.dev-supervisor-pin:sup123456}") String devSupervisorPin,
             @Value("${security.bootstrap.dev-student-pin:73914}") String devStudentPin) {
         this.userRepository = userRepository;
         this.studentRepository = studentRepository;
         this.subjectRepository = subjectRepository;
         this.passwordEncoder = passwordEncoder;
+        this.pinCryptoService = pinCryptoService;
         this.devSupervisorPin = devSupervisorPin;
         this.devStudentPin = devStudentPin;
     }
@@ -79,9 +82,9 @@ public class NonProdTestFixtureSeeder implements ApplicationRunner {
 
         Student student = new Student();
         student.setName("Demo Candidate");
-        student.setExamCenter("Non-Prod Demo Center");
         student.setRegistrationNumber(DEV_STUDENT_REG);
         student.setPinHash(passwordEncoder.encode(devStudentPin));
+        student.setPinCiphertext(pinCryptoService.encrypt(devStudentPin));
         student.setPinResetRequired(false);
         student.setSubjects(subjects);
 
