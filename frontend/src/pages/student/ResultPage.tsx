@@ -5,6 +5,7 @@ import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
 import { CheckCircle, FileText, ArrowLeft } from 'lucide-react';
 import { toast } from 'sonner';
+import { buildResultSlipFilename, triggerPdfResponseDownload } from '../../lib/pdf';
 
 export default function ResultPage() {
   const navigate = useNavigate();
@@ -34,16 +35,15 @@ export default function ResultPage() {
       const url = results?.id 
         ? `/api/v1/students/me/results/${results.id}/slip` 
         : '/api/v1/students/me/results/latest/slip';
-      const response = await axios.get(url, { responseType: 'blob' });
-      const blob = new Blob([response.data], { type: 'application/pdf' });
-      const downloadUrl = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = downloadUrl;
-      link.setAttribute('download', `JAMB-Result-Slip-${results?.id || 'latest'}.pdf`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(downloadUrl);
+      const response = await axios.get<Blob>(url, { responseType: 'blob' });
+      triggerPdfResponseDownload(
+        response,
+        buildResultSlipFilename(
+          results?.studentName,
+          results?.registrationNumber,
+          results?.id || 'latest'
+        )
+      );
       toast.success('Result slip downloaded successfully!');
     } catch (err: any) {
       toast.error('Failed to download result slip. Please try again.');

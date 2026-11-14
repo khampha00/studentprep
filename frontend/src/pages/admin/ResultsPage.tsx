@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import axios from 'axios';
 import { toast } from 'sonner';
 import { FileText, X, Award, BookOpen } from 'lucide-react';
+import { buildResultSlipFilename, triggerPdfResponseDownload } from '../../lib/pdf';
 
 interface TopicStat {
   correct: number;
@@ -32,19 +33,18 @@ export default function ResultsPage() {
       });
   }, []);
 
-  const handleDownloadResultSlip = async (resultId: string, studentName: string) => {
+  const handleDownloadResultSlip = async (
+    resultId: string,
+    studentName?: string,
+    registrationNumber?: string
+  ) => {
     try {
       toast.info('Downloading official result slip PDF...');
-      const response = await axios.get(`/api/v1/admin/results/${resultId}/slip`, { responseType: 'blob' });
-      const blob = new Blob([response.data], { type: 'application/pdf' });
-      const downloadUrl = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = downloadUrl;
-      link.setAttribute('download', `Result-${studentName.replace(/\s+/g, '_')}-${resultId.substring(0, 8)}.pdf`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(downloadUrl);
+      const response = await axios.get<Blob>(`/api/v1/admin/results/${resultId}/slip`, { responseType: 'blob' });
+      triggerPdfResponseDownload(
+        response,
+        buildResultSlipFilename(studentName, registrationNumber, resultId)
+      );
       toast.success('Result slip downloaded!');
     } catch {
       toast.error('Failed to download result slip.');
@@ -139,7 +139,7 @@ export default function ResultsPage() {
                           View Breakdown
                         </button>
                         <button 
-                          onClick={() => handleDownloadResultSlip(result.id, result.studentName)}
+                          onClick={() => handleDownloadResultSlip(result.id, result.studentName, result.registrationNumber)}
                           className="inline-flex items-center gap-1.5 px-3 py-1 bg-white border border-[#008751]/40 text-[#008751] hover:bg-emerald-50 rounded text-xs font-semibold shadow-xs cursor-pointer transition-colors"
                           title="Download official examination result slip PDF"
                         >

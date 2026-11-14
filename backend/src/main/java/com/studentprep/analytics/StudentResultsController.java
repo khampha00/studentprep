@@ -1,8 +1,9 @@
 package com.studentprep.analytics;
 
+import com.studentprep.analytics.StudentResultService.GeneratedResultSlip;
+import com.studentprep.analytics.StudentResultService.LatestStudentResultDto;
+import com.studentprep.analytics.StudentResultService.StudentResultDto;
 import com.studentprep.common.ApiResponse;
-import com.studentprep.student.Student;
-import com.studentprep.student.StudentInternalAPI;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -11,135 +12,73 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.server.ResponseStatusException;
 
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
+/**
+ * Thin HTTP controller exposing candidate and administrative exam result endpoints.
+ */
 @RestController
 public class StudentResultsController {
 
-    private final ExamResultRepository examResultRepository;
-    private final StudentInternalAPI studentInternalAPI;
-    private final ExamResultSlipGenerator examResultSlipGenerator;
+    private final StudentResultService studentResultService;
 
-    public StudentResultsController(ExamResultRepository examResultRepository, 
-                                  StudentInternalAPI studentInternalAPI,
-                                  ExamResultSlipGenerator examResultSlipGenerator) {
-        this.examResultRepository = examResultRepository;
-        this.studentInternalAPI = studentInternalAPI;
-        this.examResultSlipGenerator = examResultSlipGenerator;
+    public StudentResultsController(StudentResultService studentResultService) {
+        this.studentResultService = studentResultService;
     }
 
     @GetMapping("/api/v1/students/me/results")
-    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getMyResults(Authentication authentication) {
-        String regNum = authentication.getName();
-        Student student = studentInternalAPI.findByRegistrationNumberIgnoreCase(regNum)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Student not found"));
-        return getStudentResults(student.getId());
+    public ResponseEntity<ApiResponse<List<StudentResultDto>>> getMyResults(Authentication authentication) {
+        return ResponseEntity.ok(ApiResponse.of(
+                studentResultService.getResultsForStudentRegistration(authentication.getName())));
     }
 
     @GetMapping("/api/v1/student/results")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> getLatestStudentResult(Authentication authentication) {
-        String regNum = authentication.getName();
-        Student student = studentInternalAPI.findByRegistrationNumberIgnoreCase(regNum)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Student not found"));
-
-        return examResultRepository.findFirstByStudentIdOrderByGradedAtDesc(student.getId())
-                .map(r -> {
-                    Map<String, Object> map = new HashMap<>();
-                    map.put("id", r.getId());
-                    map.put("score", r.getTotalScore());
-                    map.put("total", r.getMaxScore());
-                    map.put("totalScore", r.getTotalScore());
-                    map.put("maxScore", r.getMaxScore());
-                    map.put("topicBreakdown", r.getTopicBreakdown());
-                    map.put("subjectScores", examResultSlipGenerator.computeSubjectScores(r));
-                    map.put("gradedAt", r.getGradedAt() != null ? r.getGradedAt().toString() : "");
-                    map.put("examSessionId", r.getExamSessionId());
-                    return ResponseEntity.ok(ApiResponse.of(map));
-                })
-                .orElseGet(() -> ResponseEntity.ok(ApiResponse.of(null)));
+    public ResponseEntity<ApiResponse<LatestStudentResultDto>> getLatestStudentResult(
+            Authentication authentication) {
+        LatestStudentResultDto latest = studentResultService
+                .getLatestResultForStudentRegistration(authentication.getName())
+                .orElse(null);
+        return ResponseEntity.ok(ApiResponse.of(latest));
     }
 
     @GetMapping("/api/v1/admin/students/{id}/results")
-    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getStudentResults(@PathVariable UUID id) {
-        List<ExamResult> results = examResultRepository.findByStudentIdOrderByGradedAtDesc(id);
-        List<Map<String, Object>> mapped = results.stream().map(r -> {
-            Map<String, Object> map = new HashMap<>();
-            map.put("id", r.getId());
-            map.put("totalScore", r.getTotalScore());
-            map.put("maxScore", r.getMaxScore());
-            map.put("topicBreakdown", r.getTopicBreakdown());
-            map.put("subjectScores", examResultSlipGenerator.computeSubjectScores(r));
-            map.put("gradedAt", r.getGradedAt() != null ? r.getGradedAt().toString() : "");
-            map.put("examSessionId", r.getExamSessionId());
-            return map;
-        }).collect(Collectors.toList());
-        return ResponseEntity.ok(ApiResponse.of(mapped));
+    public ResponseEntity<ApiResponse<List<StudentResultDto>>> getStudentResults(@PathVariable UUID id) {
+        return ResponseEntity.ok(ApiResponse.of(studentResultService.getResultsForStudent(id)));
     }
 
     @GetMapping(value = "/api/v1/students/me/results/{resultId}/slip", produces = MediaType.APPLICATION_PDF_VALUE)
-    public ResponseEntity<byte[]> getMyResultSlip(@PathVariable UUID resultId, Authentication authentication) {
-        String regNum = authentication.getName();
-        Student student = studentInternalAPI.findByRegistrationNumberIgnoreCase(regNum)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Student not found"));
-
-        ExamResult result = examResultRepository.findById(resultId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Result not found"));
-
-        if (!result.getStudent().getId().equals(student.getId())) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied to this result slip");
-        }
-
-        byte[] pdfBytes = examResultSlipGenerator.generateResultSlipPdf(result);
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_PDF);
-        headers.setContentDispositionFormData("attachment", "Result-" + student.getRegistrationNumber() + ".pdf");
-        headers.setContentLength(pdfBytes.length);
-
-        return new ResponseEntity<>(pdfBytes, headers, HttpStatus.OK);
+    public ResponseEntity<byte[]> getMyResultSlip(
+            @PathVariable UUID resultId,
+            Authentication authentication) {
+        return toPdfAttachmentResponse(
+                studentResultService.generateStudentResultSlip(authentication.getName(), resultId));
     }
 
     @GetMapping(value = "/api/v1/students/me/results/latest/slip", produces = MediaType.APPLICATION_PDF_VALUE)
     public ResponseEntity<byte[]> getMyLatestResultSlip(Authentication authentication) {
-        String regNum = authentication.getName();
-        Student student = studentInternalAPI.findByRegistrationNumberIgnoreCase(regNum)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Student not found"));
-
-        ExamResult latestResult = examResultRepository.findFirstByStudentIdOrderByGradedAtDesc(student.getId())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No exam results found for candidate"));
-
-        byte[] pdfBytes = examResultSlipGenerator.generateResultSlipPdf(latestResult);
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_PDF);
-        headers.setContentDispositionFormData("attachment", "Result-" + student.getRegistrationNumber() + "-latest.pdf");
-        headers.setContentLength(pdfBytes.length);
-
-        return new ResponseEntity<>(pdfBytes, headers, HttpStatus.OK);
+        return toPdfAttachmentResponse(
+                studentResultService.generateLatestStudentResultSlip(authentication.getName()));
     }
 
     @GetMapping(value = "/api/v1/admin/results/{resultId}/slip", produces = MediaType.APPLICATION_PDF_VALUE)
     public ResponseEntity<byte[]> getAdminResultSlip(@PathVariable UUID resultId) {
-        ExamResult result = examResultRepository.findById(resultId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Exam result not found"));
-
-        byte[] pdfBytes = examResultSlipGenerator.generateResultSlipPdf(result);
-        String regNum = result.getStudent() != null ? result.getStudent().getRegistrationNumber() : resultId.toString();
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_PDF);
-        headers.setContentDispositionFormData("attachment", "StudentResult-" + regNum + ".pdf");
-        headers.setContentLength(pdfBytes.length);
-
-        return new ResponseEntity<>(pdfBytes, headers, HttpStatus.OK);
+        return toPdfAttachmentResponse(studentResultService.generateAdminResultSlip(resultId));
     }
 
     @GetMapping(value = "/api/v1/admin/students/{id}/results/{resultId}/slip", produces = MediaType.APPLICATION_PDF_VALUE)
-    public ResponseEntity<byte[]> getAdminStudentResultSlip(@PathVariable UUID id, @PathVariable UUID resultId) {
-        return getAdminResultSlip(resultId);
+    public ResponseEntity<byte[]> getAdminStudentResultSlip(
+            @PathVariable UUID id,
+            @PathVariable UUID resultId) {
+        return toPdfAttachmentResponse(studentResultService.generateAdminStudentResultSlip(id, resultId));
+    }
+
+    private static ResponseEntity<byte[]> toPdfAttachmentResponse(GeneratedResultSlip slip) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_PDF);
+        headers.setContentDispositionFormData("attachment", slip.filename());
+        headers.setContentLength(slip.content().length);
+        return new ResponseEntity<>(slip.content(), headers, HttpStatus.OK);
     }
 }
