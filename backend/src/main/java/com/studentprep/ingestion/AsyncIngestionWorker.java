@@ -1,33 +1,47 @@
 package com.studentprep.ingestion;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.studentprep.ingestion.job.IngestionJob;
 import com.studentprep.ingestion.job.IngestionJobRepository;
 import com.studentprep.ingestion.job.IngestionJobStatus;
 import com.studentprep.questionbank.Question;
-import com.studentprep.questionbank.QuestionRepository;
 import com.studentprep.questionbank.QuestionContext;
 import com.studentprep.questionbank.QuestionContextRepository;
+import com.studentprep.questionbank.QuestionRepository;
+import com.studentprep.questionbank.QuestionStatus;
 import com.studentprep.questionbank.Subject;
 import com.studentprep.questionbank.SubjectRepository;
-
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.RestClientResponseException;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import java.util.concurrent.CompletableFuture;
-
+/**
+ * Processes extracted exam markdown asynchronously in chunks and persists sanitized failure states.
+ */
 @Service
 public class AsyncIngestionWorker {
+
+    private static final Logger log = LoggerFactory.getLogger(AsyncIngestionWorker.class);
+    private static final long DEFAULT_RETRY_DELAY_MS = 3000L;
+    private static final long RATE_LIMIT_DELAY_SECONDS = 25L;
+    private static final int MAX_RETRIES = 3;
+    private static final int MAX_RATE_LIMIT_WAITS = 10;
 
     private final LlmStructuringService llmStructuringService;
     private final IngestionJobRepository jobRepository;
@@ -35,25 +49,54 @@ public class AsyncIngestionWorker {
     private final SubjectRepository subjectRepository;
     private final QuestionContextRepository questionContextRepository;
     private final ObjectMapper objectMapper;
+    private final ErrorSanitizer errorSanitizer;
+    private final long retryDelayMs;
 
-    public AsyncIngestionWorker(LlmStructuringService llmStructuringService,
-                                IngestionJobRepository jobRepository,
-                                QuestionRepository questionRepository,
-                                SubjectRepository subjectRepository,
-                                QuestionContextRepository questionContextRepository,
-                                ObjectMapper objectMapper) {
+    @Autowired
+    public AsyncIngestionWorker(
+            LlmStructuringService llmStructuringService,
+            IngestionJobRepository jobRepository,
+            QuestionRepository questionRepository,
+            SubjectRepository subjectRepository,
+            QuestionContextRepository questionContextRepository,
+            ObjectMapper objectMapper,
+            ErrorSanitizer errorSanitizer,
+            @Value("${ingestion.retry-delay-ms:3000}") Long retryDelayMs) {
         this.llmStructuringService = llmStructuringService;
         this.jobRepository = jobRepository;
         this.questionRepository = questionRepository;
         this.subjectRepository = subjectRepository;
         this.questionContextRepository = questionContextRepository;
         this.objectMapper = objectMapper;
+        this.errorSanitizer = errorSanitizer != null ? errorSanitizer : new ErrorSanitizer("", "", "");
+        this.retryDelayMs = (retryDelayMs != null && retryDelayMs > 0) ? retryDelayMs : DEFAULT_RETRY_DELAY_MS;
+    }
+
+    public AsyncIngestionWorker(
+            LlmStructuringService llmStructuringService,
+            IngestionJobRepository jobRepository,
+            QuestionRepository questionRepository,
+            SubjectRepository subjectRepository,
+            QuestionContextRepository questionContextRepository,
+            ObjectMapper objectMapper) {
+        this(
+                llmStructuringService,
+                jobRepository,
+                questionRepository,
+                subjectRepository,
+                questionContextRepository,
+                objectMapper,
+                new ErrorSanitizer("", "", ""),
+                DEFAULT_RETRY_DELAY_MS
+        );
     }
 
     @Async
     public void processMarkdown(UUID jobId, UUID subjectId, String markdown) {
         IngestionJob job = jobRepository.findById(jobId).orElse(null);
-        if (job == null) return;
+        if (job == null) {
+            return;
+        }
 
         Subject subject = subjectRepository.findById(subjectId).orElse(null);
         if (subject == null) {
@@ -67,7 +110,6 @@ public class AsyncIngestionWorker {
             job.setStatus(IngestionJobStatus.PROCESSING);
             jobRepository.save(job);
 
-            // Find natural split points
             List<Integer> splitPoints = new ArrayList<>();
             splitPoints.add(0);
             Matcher spMatcher = Pattern.compile("\\n(Question\\s+|Q)?\\d+[\\.\\)]\\s").matcher(markdown);
@@ -99,6 +141,10 @@ public class AsyncIngestionWorker {
                     }
                 }
 
+                if (bestSplit <= currentStart) {
+                    bestSplit = targetEnd;
+                }
+
                 chunks.add(markdown.substring(currentStart, bestSplit));
                 currentStart = bestSplit;
             }
@@ -109,18 +155,23 @@ public class AsyncIngestionWorker {
             processChunkAsync(job, subject, chunks, 0, null, 0, 0);
 
         } catch (Exception e) {
-            e.printStackTrace();
+            String sanitizedError = errorSanitizer.sanitizeException(e);
+            log.error("Failed to initialize markdown ingestion for job {}: {}", jobId, sanitizedError);
             job.setStatus(IngestionJobStatus.FAILED);
-            job.setErrorMessage(e.getMessage());
+            job.setErrorMessage(sanitizedError);
             jobRepository.save(job);
         }
     }
 
-    private void processChunkAsync(IngestionJob job, Subject subject, List<String> chunks, int index, 
-                                   QuestionContext currentContext, int retryCount, int rateLimitCount) {
+    private void processChunkAsync(
+            IngestionJob job,
+            Subject subject,
+            List<String> chunks,
+            int index,
+            QuestionContext currentContext,
+            int retryCount,
+            int rateLimitCount) {
         if (index >= chunks.size()) {
-            // Post-process: retroactively link questions that have shared_context in their JSONB
-            // but no context_id set (because the LLM failed to mark is_follow_up properly)
             postProcessContextGroups(subject);
             job.setStatus(IngestionJobStatus.COMPLETED);
             jobRepository.save(job);
@@ -130,84 +181,104 @@ public class AsyncIngestionWorker {
         CompletableFuture.runAsync(() -> {
             String chunk = chunks.get(index);
             QuestionContext originalContext = currentContext;
-            
+
             try {
-                String warning = (originalContext != null) ? "Note: The previous chunk ended inside a shared context group for this specific passage:\n\n\"" + originalContext.getPassage() + "\"\n\nIf the first questions in this chunk belong to that passage, DO NOT extract the passage again, just set `is_follow_up: true` for those questions." : null;
+                String warning = (originalContext != null)
+                        ? "Note: The previous chunk ended inside a shared context group for this specific passage:\n\n\""
+                                + originalContext.getPassage()
+                                + "\"\n\nIf the first questions in this chunk belong to that passage, DO NOT extract the passage again, just set `is_follow_up: true` for those questions."
+                        : null;
                 JsonNode structuredQuestions = llmStructuringService.structureChunk(chunk, warning);
-                
+
                 QuestionContext nextContext = originalContext;
-                if (structuredQuestions.isArray()) {
-                    // First pass: collect all questions and identify context groups
+                if (structuredQuestions != null && structuredQuestions.isArray()) {
                     List<JsonNode> questionNodes = new ArrayList<>();
                     for (JsonNode qNode : structuredQuestions) {
                         questionNodes.add(qNode);
                     }
-                    
-                    for (int qi = 0; qi < questionNodes.size(); qi++) {
-                        JsonNode qNode = questionNodes.get(qi);
-                        boolean isFollowUp = qNode.path("is_follow_up").asBoolean(false);
-                        boolean hasSharedContext = qNode.hasNonNull("shared_context") && !qNode.path("shared_context").asText().isEmpty();
-                        
+
+                    for (JsonNode qNode : questionNodes) {
+                        boolean hasSharedContext = qNode.hasNonNull("shared_context")
+                                && !qNode.path("shared_context").asText().isEmpty();
+
                         if (hasSharedContext) {
-                            // This question introduces a new shared context
                             nextContext = new QuestionContext();
                             nextContext.setSubject(subject);
                             nextContext.setPassage(qNode.path("shared_context").asText());
                             nextContext = questionContextRepository.save(nextContext);
-                        } else if (nextContext != null) {
-                            // Assume it's a follow-up since LLM often misses is_follow_up
-                            // If this question is truly standalone, Admin can ungroup it in the UI.
-                            // nextContext remains the same.
                         }
-                        // If isFollowUp is true but no shared_context, keep using nextContext (correct behavior)
 
                         Question q = new Question();
-                        q.setStatus(com.studentprep.questionbank.QuestionStatus.DRAFT);
+                        q.setStatus(QuestionStatus.DRAFT);
                         q.setSubject(subject);
                         if (nextContext != null) {
                             q.setContext(nextContext);
                         }
-                        Map<String, Object> contentMap = objectMapper.convertValue(qNode, new TypeReference<Map<String, Object>>() {});
+                        Map<String, Object> contentMap = objectMapper.convertValue(
+                                qNode,
+                                new TypeReference<Map<String, Object>>() {}
+                        );
                         q.setContent(contentMap);
                         questionRepository.save(q);
                     }
                 }
-                
+
                 job.setProcessedChunks(index + 1);
                 jobRepository.save(job);
-                
+
                 processChunkAsync(job, subject, chunks, index + 1, nextContext, 0, 0);
 
             } catch (Exception e) {
-                String errorMsg = e.getMessage();
-                if (errorMsg != null && errorMsg.contains("429")) {
-                    if (rateLimitCount + 1 >= 10) {
+                String sanitizedError = errorSanitizer.sanitizeException(e);
+                if (isRateLimitFailure(e, sanitizedError)) {
+                    if (rateLimitCount + 1 >= MAX_RATE_LIMIT_WAITS) {
+                        log.warn("Gemini API rate limit exceeded for job {} after {} waits", job.getId(), MAX_RATE_LIMIT_WAITS);
                         job.setStatus(IngestionJobStatus.FAILED);
                         job.setErrorMessage("Gemini API rate limit exceeded after 10 waits. Please try again later.");
                         jobRepository.save(job);
                         return;
                     }
-                    System.err.println("Hit 429 rate limit, patiently waiting 25s... (wait " + (rateLimitCount + 1) + "/10)");
-                    java.util.concurrent.CompletableFuture.runAsync(() -> processChunkAsync(job, subject, chunks, index, originalContext, retryCount, rateLimitCount + 1), java.util.concurrent.CompletableFuture.delayedExecutor(25, java.util.concurrent.TimeUnit.SECONDS));
+                    log.warn("Hit 429 rate limit on job {}, waiting {}s (wait {}/{})",
+                            job.getId(), RATE_LIMIT_DELAY_SECONDS, rateLimitCount + 1, MAX_RATE_LIMIT_WAITS);
+                    CompletableFuture.runAsync(
+                            () -> processChunkAsync(job, subject, chunks, index, originalContext, retryCount, rateLimitCount + 1),
+                            CompletableFuture.delayedExecutor(RATE_LIMIT_DELAY_SECONDS, TimeUnit.SECONDS)
+                    );
                 } else {
-                    if (retryCount + 1 >= 3) {
+                    if (retryCount + 1 >= MAX_RETRIES) {
+                        log.error("LLM extraction failed for job {} after {} retries: {}",
+                                job.getId(), MAX_RETRIES, sanitizedError);
                         job.setStatus(IngestionJobStatus.FAILED);
-                        job.setErrorMessage("LLM Extraction failed after 3 retries: " + errorMsg);
+                        job.setErrorMessage(errorSanitizer.sanitizeMessage(
+                                "LLM Extraction failed after 3 retries: " + sanitizedError
+                        ));
                         jobRepository.save(job);
                         return;
                     }
-                    System.err.println("Failed to process chunk (attempt " + (retryCount + 1) + "/3): " + errorMsg);
-                    java.util.concurrent.CompletableFuture.runAsync(() -> processChunkAsync(job, subject, chunks, index, originalContext, retryCount + 1, rateLimitCount), java.util.concurrent.CompletableFuture.delayedExecutor(3, java.util.concurrent.TimeUnit.SECONDS));
+                    log.warn("Failed to process chunk {} for job {} (attempt {}/{}): {}",
+                            index, job.getId(), retryCount + 1, MAX_RETRIES, sanitizedError);
+                    CompletableFuture.runAsync(
+                            () -> processChunkAsync(job, subject, chunks, index, originalContext, retryCount + 1, rateLimitCount),
+                            CompletableFuture.delayedExecutor(retryDelayMs, TimeUnit.MILLISECONDS)
+                    );
                 }
             }
         });
+    }
+
+    private static boolean isRateLimitFailure(Exception ex, String sanitizedError) {
+        if (ex instanceof RestClientResponseException responseException
+                && responseException.getStatusCode().value() == 429) {
+            return true;
+        }
+        return sanitizedError != null && sanitizedError.contains("429");
     }
 
     /**
      * Post-processing step: retroactively creates QuestionContext records for questions
      * that have shared_context text in their JSONB content but no context_id set.
      * This handles the case where the LLM fails to mark follow-up questions with is_follow_up: true.
-     * 
+     *
      * Logic: Iterate questions in creation order. When a question has shared_context text,
      * create a QuestionContext and link it. Then link all subsequent questions that have
      * is_follow_up: true OR have no shared_context of their own (until we hit another
@@ -216,46 +287,42 @@ public class AsyncIngestionWorker {
     @Transactional
     public void postProcessContextGroups(Subject subject) {
         List<Question> questions = questionRepository.findBySubjectOrderByCreatedAtAsc(subject);
-        
+
         QuestionContext activeContext = null;
-        
-        for (int i = 0; i < questions.size(); i++) {
-            Question q = questions.get(i);
-            
-            // Skip questions that already have a context linked
+
+        for (Question q : questions) {
             if (q.getContext() != null) {
                 activeContext = q.getContext();
                 continue;
             }
-            
+
             Map<String, Object> content = q.getContent();
-            if (content == null) continue;
-            
-            String sharedContextText = content.get("shared_context") != null 
-                    ? String.valueOf(content.get("shared_context")).trim() : "";
-            boolean isFollowUp = Boolean.TRUE.equals(content.get("is_follow_up"));
-            
+            if (content == null) {
+                continue;
+            }
+
+            String sharedContextText = content.get("shared_context") != null
+                    ? String.valueOf(content.get("shared_context")).trim()
+                    : "";
+
             if (!sharedContextText.isEmpty()) {
-                // This question introduces a new shared context
                 activeContext = new QuestionContext();
                 activeContext.setSubject(subject);
                 activeContext.setPassage(sharedContextText);
                 activeContext = questionContextRepository.save(activeContext);
-                
+
                 q.setContext(activeContext);
                 questionRepository.save(q);
-                
-                System.out.println("[PostProcess] Created context " + activeContext.getId() 
-                        + " for question " + q.getId() + " (shared_context found)");
+
+                log.debug("[PostProcess] Created context {} for question {} (shared_context found)",
+                        activeContext.getId(), q.getId());
             } else if (activeContext != null) {
-                // Assume follow-up question that should share the previous context
                 q.setContext(activeContext);
                 questionRepository.save(q);
-                
-                System.out.println("[PostProcess] Linked question " + q.getId() 
-                        + " to context " + activeContext.getId() + " (assumed follow-up)");
+
+                log.debug("[PostProcess] Linked question {} to context {} (assumed follow-up)",
+                        q.getId(), activeContext.getId());
             } else {
-                // Standalone question
                 activeContext = null;
             }
         }

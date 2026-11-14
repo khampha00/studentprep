@@ -2,24 +2,39 @@ package com.studentprep.student;
 
 import com.studentprep.questionbank.Subject;
 import com.studentprep.questionbank.SubjectRepository;
+import com.studentprep.student.StudentManagementService.ProvisionedStudent;
+import com.studentprep.student.dto.BulkCredentialResponse;
+import com.studentprep.student.dto.BulkImportResponse;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
 public class CsvStudentImporter {
 
+    private static final String CSV_SPLIT_REGEX = ",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)";
+    private static final int MAX_FIELD_LENGTH = 255;
+
     private final StudentRepository studentRepository;
     private final SubjectRepository subjectRepository;
     private final StudentManagementService studentManagementService;
 
-    public CsvStudentImporter(StudentRepository studentRepository, SubjectRepository subjectRepository, StudentManagementService studentManagementService) {
+    public CsvStudentImporter(
+            StudentRepository studentRepository,
+            SubjectRepository subjectRepository,
+            StudentManagementService studentManagementService) {
         this.studentRepository = studentRepository;
         this.subjectRepository = subjectRepository;
         this.studentManagementService = studentManagementService;
@@ -27,7 +42,9 @@ public class CsvStudentImporter {
 
     private Subject findOrCreateSubject(String name) {
         String cleanName = name.trim();
-        if (cleanName.isEmpty()) return null;
+        if (cleanName.isEmpty()) {
+            return null;
+        }
 
         Optional<Subject> exact = subjectRepository.findByName(cleanName);
         if (exact.isPresent()) {
@@ -35,124 +52,171 @@ public class CsvStudentImporter {
         }
 
         List<Subject> allSubjects = subjectRepository.findAll();
-
         for (Subject s : allSubjects) {
             if (s.getName().equalsIgnoreCase(cleanName)) {
                 return s;
             }
         }
 
-        String normalized = cleanName.toUpperCase().replaceAll("[_\\- ]+", " ").trim();
-        if (normalized.equals("ENGLISH") || normalized.equals("USE OF ENGLISH") || normalized.equals("ENGLISH LANGUAGE")) {
+        String normalized = cleanName.toUpperCase(Locale.ROOT).replaceAll("[_\\- ]+", " ").trim();
+        if ("ENGLISH".equals(normalized)
+                || "USE OF ENGLISH".equals(normalized)
+                || "ENGLISH LANGUAGE".equals(normalized)) {
             for (Subject s : allSubjects) {
-                String sNorm = s.getName().toUpperCase().replaceAll("[_\\- ]+", " ").trim();
-                if (sNorm.equals("ENGLISH") || sNorm.equals("USE OF ENGLISH") || sNorm.equals("ENGLISH LANGUAGE")) {
+                String sNorm = s.getName().toUpperCase(Locale.ROOT).replaceAll("[_\\- ]+", " ").trim();
+                if ("ENGLISH".equals(sNorm) || "USE OF ENGLISH".equals(sNorm) || "ENGLISH LANGUAGE".equals(sNorm)) {
                     return s;
                 }
             }
         }
-        if (normalized.equals("MATH") || normalized.equals("MATHS") || normalized.equals("MATHEMATICS")) {
+        if ("MATH".equals(normalized) || "MATHS".equals(normalized) || "MATHEMATICS".equals(normalized)) {
             for (Subject s : allSubjects) {
-                String sNorm = s.getName().toUpperCase().replaceAll("[_\\- ]+", " ").trim();
-                if (sNorm.equals("MATH") || sNorm.equals("MATHS") || sNorm.equals("MATHEMATICS")) {
+                String sNorm = s.getName().toUpperCase(Locale.ROOT).replaceAll("[_\\- ]+", " ").trim();
+                if ("MATH".equals(sNorm) || "MATHS".equals(sNorm) || "MATHEMATICS".equals(sNorm)) {
                     return s;
                 }
             }
         }
 
         Subject newSubject = new Subject();
-        newSubject.setName(cleanName.toUpperCase());
+        newSubject.setName(cleanName.toUpperCase(Locale.ROOT));
         return subjectRepository.save(newSubject);
     }
 
     @Transactional
-    public Map<String, Object> processBulkCsv(MultipartFile csvFile) {
+    public BulkImportResponse processBulkCsv(MultipartFile csvFile) {
+        if (csvFile == null || csvFile.isEmpty()) {
+            throw new IllegalArgumentException("CSV file must not be empty");
+        }
+
         int created = 0;
         List<String> errors = new ArrayList<>();
-        List<Map<String, String>> credentials = new ArrayList<>();
-        java.security.SecureRandom secureRandom = new java.security.SecureRandom();
+        List<BulkCredentialResponse> credentials = new ArrayList<>();
 
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(csvFile.getInputStream(), StandardCharsets.UTF_8))) {
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(csvFile.getInputStream(), StandardCharsets.UTF_8))) {
             String line;
-            boolean firstLine = true;
+            boolean headerProcessed = false;
+            int dataRowNumber = 0;
+
             while ((line = reader.readLine()) != null) {
-                if (firstLine) { 
-                    firstLine = false;
+                if (!headerProcessed) {
+                    if (line.startsWith("\uFEFF")) {
+                        line = line.substring(1);
+                    }
+                    headerProcessed = true;
                     continue;
                 }
-                if (line.trim().isEmpty()) continue;
-                String[] parts = line.split(",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)");
-                for (int i = 0; i < parts.length; i++) {
-                    parts[i] = parts[i].replaceAll("^\"|\"$", "").replace("\"\"", "\"");
+                if (line.trim().isEmpty()) {
+                    continue;
                 }
+                dataRowNumber++;
+
+                String[] parts = line.split(CSV_SPLIT_REGEX, -1);
+                for (int i = 0; i < parts.length; i++) {
+                    parts[i] = unquoteCsvCell(parts[i]);
+                }
+
                 if (parts.length < 6) {
-                    errors.add("Invalid format: " + line);
+                    errors.add("Row " + dataRowNumber + ": invalid format (expected 6 columns)");
+                    continue;
+                }
+
+                String name = parts[0];
+                String center = parts[1];
+                if (name.isEmpty()) {
+                    errors.add("Row " + dataRowNumber + ": student name is required");
+                    continue;
+                }
+                if (name.length() > MAX_FIELD_LENGTH || center.length() > MAX_FIELD_LENGTH) {
+                    errors.add("Row " + dataRowNumber + ": field exceeds maximum length of 255 characters");
                     continue;
                 }
 
                 try {
-                    String name = parts[0].trim();
-                    String center = parts[1].trim();
-
                     Set<Subject> subjects = new HashSet<>();
                     for (int i = 2; i < 6; i++) {
-                        if (i < parts.length) {
-                            String subjectName = parts[i].trim();
-                            if (subjectName.isEmpty()) continue;
-                            Subject subject = findOrCreateSubject(subjectName);
-                            if (subject != null) {
-                                subjects.add(subject);
-                            }
+                        String subjectName = parts[i];
+                        if (subjectName.isEmpty()) {
+                            continue;
+                        }
+                        Subject subject = findOrCreateSubject(subjectName);
+                        if (subject != null) {
+                            subjects.add(subject);
                         }
                     }
 
-                    Student student = new Student();
-                    student.setName(name);
-                    student.setExamCenter(center);
-                    student.setSubjects(subjects);
+                    ProvisionedStudent provisioned = studentManagementService.createStudentWithSubjects(
+                            name,
+                            center.isEmpty() ? null : center,
+                            subjects);
 
-                    student = studentManagementService.createStudent(student);
-
-                    credentials.add(Map.of("registrationNumber", student.getRegistrationNumber(), "pin", student.getPin()));
+                    credentials.add(new BulkCredentialResponse(
+                            provisioned.student().getName(),
+                            provisioned.student().getRegistrationNumber(),
+                            provisioned.oneTimePin()));
                     created++;
-                } catch (Exception e) {
-                    errors.add("Error processing line '" + line + "': " + e.getMessage());
+                } catch (RuntimeException ex) {
+                    errors.add("Row " + dataRowNumber + ": failed to register student");
                 }
             }
-        } catch (Exception e) {
-            errors.add("Failed to read file: " + e.getMessage());
+        } catch (IOException ex) {
+            throw new IllegalArgumentException("Failed to read CSV file", ex);
         }
 
-        Map<String, Object> result = new HashMap<>();
-        result.put("created", created);
-        result.put("errors", errors);
-        result.put("credentials", credentials);
-        return result;
-    }
-
-    private String generateRegistrationNumber() {
-        String chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        StringBuilder sb = new StringBuilder("JAMB-2026-");
-        Random random = new Random();
-        for (int i = 0; i < 6; i++) {
-            sb.append(chars.charAt(random.nextInt(chars.length())));
-        }
-        return sb.toString();
+        return new BulkImportResponse(created, errors, credentials);
     }
 
     @Transactional(readOnly = true)
     public byte[] exportStudentsCsv() {
         List<Student> allStudents = studentRepository.findAll();
         StringBuilder sb = new StringBuilder();
-        sb.append("Name,Registration Number,Login PIN,Exam Center,Registered Subjects\n");
+        sb.append("Name,Registration Number,Exam Center,Registered Subjects\n");
         for (Student s : allStudents) {
-            String subjects = s.getSubjects().stream().map(Subject::getName).collect(Collectors.joining("; "));
-            sb.append("\"").append(s.getName() != null ? s.getName().replace("\"", "\"\"") : "").append("\",")
-              .append("\"").append(s.getRegistrationNumber()).append("\",")
-              .append("\"").append(s.getPin()).append("\",")
-              .append("\"").append(s.getExamCenter() != null ? s.getExamCenter().replace("\"", "\"\"") : "").append("\",")
-              .append("\"").append(subjects.replace("\"", "\"\"")).append("\"\n");
+            String subjects = s.getSubjects().stream()
+                    .map(Subject::getName)
+                    .sorted(String.CASE_INSENSITIVE_ORDER)
+                    .collect(Collectors.joining("; "));
+            sb.append(formatCsvField(s.getName())).append(",")
+                    .append(formatCsvField(s.getRegistrationNumber())).append(",")
+                    .append(formatCsvField(s.getExamCenter())).append(",")
+                    .append(formatCsvField(subjects)).append("\n");
         }
         return sb.toString().getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static String unquoteCsvCell(String cell) {
+        String trimmed = cell.trim();
+        if (trimmed.length() >= 2 && trimmed.startsWith("\"") && trimmed.endsWith("\"")) {
+            trimmed = trimmed.substring(1, trimmed.length() - 1).replace("\"\"", "\"");
+        }
+        return trimmed.trim();
+    }
+
+    private static String formatCsvField(String raw) {
+        String value = raw != null ? raw : "";
+        if (needsFormulaNeutralization(value)) {
+            value = "'" + value;
+        }
+        return "\"" + value.replace("\"", "\"\"") + "\"";
+    }
+
+    private static boolean needsFormulaNeutralization(String value) {
+        if (value.isEmpty()) {
+            return false;
+        }
+        char first = value.charAt(0);
+        if (first == '=' || first == '+' || first == '-' || first == '@' || first == '\t' || first == '\r') {
+            return true;
+        }
+        String trimmed = value.trim();
+        if (trimmed.isEmpty()) {
+            return false;
+        }
+        char firstNonWhitespace = trimmed.charAt(0);
+        return firstNonWhitespace == '='
+                || firstNonWhitespace == '+'
+                || firstNonWhitespace == '-'
+                || firstNonWhitespace == '@';
     }
 }

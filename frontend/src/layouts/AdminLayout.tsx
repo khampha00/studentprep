@@ -12,6 +12,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '../components/ui/alert-dialog';
+import { clearStoredToken } from '../lib/auth';
 
 export default function AdminLayout() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -25,26 +26,27 @@ export default function AdminLayout() {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
     } catch {
-      // best-effort
+      // best-effort logout cleanup
     }
-    localStorage.removeItem('token');
-    window.location.href = '/admin'; // Redirects to login
+    clearStoredToken();
+    window.location.assign('/admin');
   };
 
   return (
-    <div className="h-screen overflow-hidden bg-slate-50 flex font-sans">
+    <div className="h-screen overflow-hidden bg-slate-50 flex font-sans text-slate-900">
       <aside
-        className={`${isSidebarOpen ? 'w-64' : 'w-20'} bg-white border-r border-slate-200 shadow-sm flex flex-col shrink-0 transition-all duration-300 ease-in-out relative`}
+        className={`${isSidebarOpen ? 'w-64' : 'w-20'} bg-zinc-50 border-r border-slate-200 shadow-sm flex flex-col shrink-0 transition-all duration-300 ease-in-out relative`}
       >
         <div className={`p-4 border-b border-slate-200 flex items-center ${isSidebarOpen ? 'justify-between' : 'justify-center'}`}>
           {isSidebarOpen && <h1 className="text-xl font-bold text-[#008751] truncate">Admin Panel</h1>}
           {!isSidebarOpen && <h1 className="text-xl font-bold text-[#008751]">AP</h1>}
         </div>
 
-        {/* Toggle Button */}
         <button
+          type="button"
           onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-          className="absolute -right-3 top-6 bg-white border border-slate-200 text-slate-500 rounded-full p-1 shadow-sm hover:bg-slate-50 z-10"
+          className="absolute -right-3 top-6 bg-slate-50 border border-slate-200 text-slate-600 rounded-full p-1 shadow-sm hover:bg-slate-100 z-10"
+          aria-label={isSidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
         >
           {isSidebarOpen ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
         </button>
@@ -54,7 +56,7 @@ export default function AdminLayout() {
             to="/admin"
             end
             className={({ isActive }) =>
-              `flex items-center gap-3 px-3 py-2 rounded-md transition-colors ${isActive ? 'bg-slate-100 text-[#008751] font-semibold' : 'text-slate-600 hover:bg-slate-50'
+              `flex items-center gap-3 px-3 py-2 rounded-md transition-colors ${isActive ? 'bg-slate-100 text-[#008751] font-semibold' : 'text-slate-700 hover:bg-slate-100'
               } ${!isSidebarOpen && 'justify-center px-0'}`
             }
             title="Overview"
@@ -65,7 +67,7 @@ export default function AdminLayout() {
           <NavLink
             to="/admin/subjects"
             className={({ isActive }) =>
-              `flex items-center gap-3 px-3 py-2 rounded-md transition-colors ${isActive ? 'bg-slate-100 text-[#008751] font-semibold' : 'text-slate-600 hover:bg-slate-50'
+              `flex items-center gap-3 px-3 py-2 rounded-md transition-colors ${isActive ? 'bg-slate-100 text-[#008751] font-semibold' : 'text-slate-700 hover:bg-slate-100'
               } ${!isSidebarOpen && 'justify-center px-0'}`
             }
             title="Subjects"
@@ -76,7 +78,7 @@ export default function AdminLayout() {
           <NavLink
             to="/admin/students"
             className={({ isActive }) =>
-              `flex items-center gap-3 px-3 py-2 rounded-md transition-colors ${isActive ? 'bg-slate-100 text-[#008751] font-semibold' : 'text-slate-600 hover:bg-slate-50'
+              `flex items-center gap-3 px-3 py-2 rounded-md transition-colors ${isActive ? 'bg-slate-100 text-[#008751] font-semibold' : 'text-slate-700 hover:bg-slate-100'
               } ${!isSidebarOpen && 'justify-center px-0'}`
             }
             title="Students"
@@ -87,7 +89,7 @@ export default function AdminLayout() {
           <NavLink
             to="/admin/results"
             className={({ isActive }) =>
-              `flex items-center gap-3 px-3 py-2 rounded-md transition-colors ${isActive ? 'bg-slate-100 text-[#008751] font-semibold' : 'text-slate-600 hover:bg-slate-50'
+              `flex items-center gap-3 px-3 py-2 rounded-md transition-colors ${isActive ? 'bg-slate-100 text-[#008751] font-semibold' : 'text-slate-700 hover:bg-slate-100'
               } ${!isSidebarOpen && 'justify-center px-0'}`
             }
             title="Results"
@@ -99,15 +101,18 @@ export default function AdminLayout() {
 
         <div className="p-4 border-t border-slate-200 mt-auto">
           <AlertDialog>
-            <AlertDialogTrigger>
-              <button
-                title="Logout"
-                className={`flex items-center gap-3 px-3 py-2 w-full rounded-md transition-colors text-slate-600 hover:bg-red-50 hover:text-red-600 font-medium ${!isSidebarOpen && 'justify-center px-0'}`}
-              >
-                <LogOut className="h-5 w-5 shrink-0" />
-                {isSidebarOpen && <span>Logout</span>}
-              </button>
-            </AlertDialogTrigger>
+            <AlertDialogTrigger
+              render={
+                <button
+                  type="button"
+                  title="Logout"
+                  className={`flex items-center gap-3 px-3 py-2 w-full rounded-md transition-colors text-slate-700 hover:bg-red-50 hover:text-red-600 font-medium ${!isSidebarOpen && 'justify-center px-0'}`}
+                >
+                  <LogOut className="h-5 w-5 shrink-0" />
+                  {isSidebarOpen && <span>Logout</span>}
+                </button>
+              }
+            />
             <AlertDialogContent>
               <AlertDialogHeader>
                 <AlertDialogTitle>Confirm Logout</AlertDialogTitle>
@@ -126,7 +131,7 @@ export default function AdminLayout() {
         </div>
       </aside>
 
-      <main className="flex-1 overflow-auto">
+      <main className="flex-1 overflow-auto bg-slate-50">
         <Outlet />
       </main>
     </div>

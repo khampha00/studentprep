@@ -2,35 +2,52 @@ package com.studentprep.ingestion;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
-import org.springframework.web.client.HttpClientErrorException;
-import java.util.Map;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
+
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * Structures extracted markdown chunks into question JSON payloads using Gemini,
+ * sending credentials exclusively via headers and sanitizing upstream errors.
+ */
 @Service
 public class LlmStructuringService {
 
+    private static final Logger log = LoggerFactory.getLogger(LlmStructuringService.class);
+    private static final String GEMINI_GENERATE_URL =
+            "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent";
+
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
-    
-    @Value("${LLM_API_KEY:}")
-    private String geminiApiKey;
+    private final String geminiApiKey;
+    private final String geminiModel;
 
-    @Value("${gemini.model}")
-    private String geminiModel;
-
-    public LlmStructuringService(RestClient.Builder restClientBuilder, ObjectMapper objectMapper) {
+    public LlmStructuringService(
+            RestClient.Builder restClientBuilder,
+            ObjectMapper objectMapper,
+            @Value("${gemini.api-key:}") String geminiApiKey,
+            @Value("${gemini.model:gemini-3.5-flash-lite}") String geminiModel) {
         this.restClient = restClientBuilder.build();
         this.objectMapper = objectMapper;
+        this.geminiApiKey = geminiApiKey;
+        this.geminiModel = geminiModel;
     }
 
     public JsonNode structureChunk(String chunk, String warning) throws Exception {
-        if (geminiApiKey == null || geminiApiKey.isEmpty()) {
-            throw new IllegalStateException("LLM_API_KEY is not configured.");
+        if (geminiApiKey == null || geminiApiKey.isBlank()) {
+            throw new IllegalStateException("Gemini API key is not configured.");
+        }
+        if (geminiModel == null || geminiModel.isBlank()) {
+            throw new IllegalStateException("Gemini model is not configured.");
         }
 
         String promptTemplate = "You are an AI tasked with converting raw exam PDF markdown into strict JSON format. " +
@@ -49,43 +66,69 @@ public class LlmStructuringService {
         String prompt = promptTemplate + (warning != null ? warning + "\\n\\n" : "") + chunk;
 
         Map<String, Object> requestBody = Map.of(
-            "contents", List.of(
-                Map.of("parts", List.of(
-                    Map.of("text", prompt)
-                ))
-            ),
-            "generationConfig", Map.of(
-                "maxOutputTokens", 8192
-            )
+                "contents", List.of(
+                        Map.of("parts", List.of(
+                                Map.of("text", prompt)
+                        ))
+                ),
+                "generationConfig", Map.of(
+                        "maxOutputTokens", 8192
+                )
         );
 
-        String responseStr = restClient.post()
-                .uri("https://generativelanguage.googleapis.com/v1beta/models/" + geminiModel + ":generateContent?key=" + geminiApiKey)
-                .header("Content-Type", "application/json")
-                .body(requestBody)
-                .retrieve()
-                .body(String.class);
+        String responseStr;
+        try {
+            responseStr = restClient.post()
+                    .uri(GEMINI_GENERATE_URL, geminiModel)
+                    .header("Content-Type", "application/json")
+                    .header("x-goog-api-key", geminiApiKey)
+                    .body(requestBody)
+                    .retrieve()
+                    .body(String.class);
+        } catch (RestClientResponseException ex) {
+            int statusCode = ex.getStatusCode().value();
+            log.warn("Gemini API request failed with HTTP status {}", statusCode);
+            throw new IllegalStateException("Gemini API request failed with HTTP " + statusCode);
+        } catch (RestClientException ex) {
+            String sanitized = ErrorSanitizer.sanitizeThrowable(ex, geminiApiKey);
+            log.warn("Gemini API communication failure: {}", sanitized);
+            throw new IllegalStateException("Gemini API communication failure: " + sanitized);
+        }
+
+        if (responseStr == null || responseStr.isBlank()) {
+            throw new IllegalStateException("Gemini API returned an empty response.");
+        }
 
         JsonNode rootNode = objectMapper.readTree(responseStr);
-        String llmOutput = rootNode.path("candidates").get(0).path("content").path("parts").get(0).path("text").asText();
-        
-        llmOutput = llmOutput.replaceAll("^```json", "").replaceAll("```$", "").trim();
-        System.out.println("LLM OUTPUT LENGTH: " + llmOutput.length());
-        System.out.println("LLM OUTPUT PREVIEW: " + llmOutput.substring(0, Math.min(200, llmOutput.length())));
-        
+        JsonNode candidates = rootNode.path("candidates");
+        if (!candidates.isArray() || candidates.isEmpty()) {
+            throw new IllegalStateException("Gemini API returned no candidates.");
+        }
+        JsonNode parts = candidates.get(0).path("content").path("parts");
+        if (!parts.isArray() || parts.isEmpty()) {
+            throw new IllegalStateException("Gemini API returned no content parts.");
+        }
+
+        String llmOutput = parts.get(0).path("text").asText("");
+        llmOutput = llmOutput.replaceAll("^```(?:json)?\\s*", "").replaceAll("```$", "").trim();
+        log.debug("Received structured LLM output ({} chars)", llmOutput.length());
+
         if (!llmOutput.endsWith("]")) {
-            Matcher matcher = Pattern.compile("\\{\\s*\"type\".*?\"is_follow_up\"\\s*:\\s*(true|false)\\s*\\}", Pattern.DOTALL).matcher(llmOutput);
+            Matcher matcher = Pattern.compile("\\{\\s*\"type\".*?\"is_follow_up\"\\s*:\\s*(true|false)\\s*\\}", Pattern.DOTALL)
+                    .matcher(llmOutput);
             StringBuilder salvaged = new StringBuilder("[");
             boolean first = true;
             while (matcher.find()) {
-                if (!first) salvaged.append(",");
+                if (!first) {
+                    salvaged.append(",");
+                }
                 salvaged.append(matcher.group());
                 first = false;
             }
             salvaged.append("]");
             llmOutput = salvaged.toString();
         }
-        
+
         return objectMapper.readTree(llmOutput);
     }
 }

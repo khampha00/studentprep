@@ -1,15 +1,21 @@
 spring:
   config:
-    import: optional:file:../.env[.properties]
+    import:
+      - optional:file:../.env[.properties]
+      - optional:file:.env[.properties]
   mvc:
     problem-details:
       enabled: true
+  servlet:
+    multipart:
+      max-file-size: ${SPRING_MULTIPART_MAX_FILE_SIZE:15MB}
+      max-request-size: ${SPRING_MULTIPART_MAX_REQUEST_SIZE:20MB}
   application:
     name: studentprep-backend
   datasource:
-    url: ${POSTGRES_URL}
-    username: ${POSTGRES_USER}
-    password: ${POSTGRES_PASSWORD}
+    url: ${POSTGRES_URL:jdbc:postgresql://localhost:5433/studentprep}
+    username: ${POSTGRES_USER:postgres}
+    password: ${POSTGRES_PASSWORD:studentprep_dev}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
@@ -17,28 +23,59 @@ spring:
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
-        format_sql: true
+        format_sql: false
     open-in-view: false
   flyway:
     enabled: true
-    baseline-on-migrate: true
-    validate-on-migrate: false
+    baseline-on-migrate: ${FLYWAY_BASELINE_ON_MIGRATE:false}
+    validate-on-migrate: true
   data:
     redis:
-      host: ${REDIS_HOST}
-      password: ${REDIS_PASSWORD}
-      port: 6379
+      host: ${REDIS_HOST:localhost}
+      password: ${REDIS_PASSWORD:studentprep_redis}
+      port: ${REDIS_PORT:6379}
 
 security:
   jwt:
-    secret: ${JWT_SECRET}
-    expiration-ms: ${JWT_EXPIRATION_MS}
+    secret: ${TEST_JWT_SECRET:test_only_jwt_secret_key_at_least_32_bytes_long_12345}
+    expiration-ms: ${TEST_JWT_EXPIRATION_MS:900000}
+    refresh-expiration-ms: ${TEST_JWT_REFRESH_EXPIRATION_MS:604800000}
+  cookie:
+    secure: false
+    same-site: Strict
+  bootstrap:
+    admin-secret: ${TEST_ADMIN_BOOTSTRAP_SECRET:test_admin_bootstrap_secret_123}
+  rate-limit:
+    login-max-failures-per-identifier: 5
+    login-lockout-minutes: 15
+    login-max-per-ip-per-minute: 60
+    refresh-max-per-ip-per-minute: 30
+    refresh-max-per-subject-per-minute: 15
+    sync-max-per-student-per-minute: 10
+
+cors:
+  allowed-origins: http://localhost:5173,http://localhost:3000
+
+s3:
+  endpoint: ${S3_ENDPOINT:http://localhost:9000}
+  public-base-url: ${S3_PUBLIC_BASE_URL:http://localhost:9000}
+  accessKey: ${S3_ACCESS_KEY:minioadmin}
+  secretKey: ${S3_SECRET_KEY:minioadmin}
+  bucket: ${S3_BUCKET:studentprep-assets}
+
+docling:
+  parser:
+    url: ${DOCLING_PARSER_URL:http://localhost:8000}
+    timeout-ms: ${DOCLING_TIMEOUT_MS:60000}
+  api-key: ${TEST_DOCLING_API_KEY:test_docling_api_key}
 
 gemini:
   model: ${GEMINI_MODEL:gemini-3.5-flash-lite}
+  api-key: ${LLM_API_KEY:}
 
 server:
   port: 8080
   error:
-    include-message: always
-    include-binding-errors: always
+    include-message: never
+    include-binding-errors: never
+    include-stacktrace: never

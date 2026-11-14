@@ -1,7 +1,7 @@
 # Environments
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 
 # IDEs
 .idea/
@@ -20,8 +20,24 @@ target/
 *.ear
 .mvn/
 
-# Node / Vite
+# Node / Vite / PWA
 node_modules/
 dist/
 dist-ssr/
+dev-dist/
+frontend/dev-dist/
 .npm
+
+# Debug dumps & Playwright artifacts
+*.pdf
+parsed_*.json
+debug_*.json
+debug_*.md
+playwright-report/
+test-results/
+
+# Python
+**/.venv/
+**/__pycache__/
+**/.pytest_cache/
+*.pyc

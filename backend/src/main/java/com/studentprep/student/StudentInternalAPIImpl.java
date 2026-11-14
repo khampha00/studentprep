@@ -2,8 +2,12 @@ package com.studentprep.student;
 
 import org.springframework.stereotype.Service;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 public class StudentInternalAPIImpl implements StudentInternalAPI {
@@ -30,12 +34,12 @@ public class StudentInternalAPIImpl implements StudentInternalAPI {
     }
 
     @Override
-    public java.util.List<java.util.Map<String, Object>> getSubjectRegistrations() {
+    public List<Map<String, Object>> getSubjectRegistrations() {
         return studentRepository.countSubjectRegistrations().stream().map(obj -> {
-            java.util.Map<String, Object> map = new java.util.HashMap<>();
+            Map<String, Object> map = new HashMap<>();
             map.put("subjectName", obj[0]);
             map.put("enrollmentCount", obj[1]);
             return map;
-        }).collect(java.util.stream.Collectors.toList());
+        }).collect(Collectors.toList());
     }
 }
