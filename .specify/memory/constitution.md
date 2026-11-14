@@ -1,3 +1,11 @@
+<!--
+Sync Impact Report
+- Version change: 1.0.0 -> 1.1.0 (MINOR: expand Principle II for audited ROLE_ADMIN encrypted student credential PDF export)
+- Modified principles: II. Zero-Trust Security, Identity & Secrets Hygiene (allow AEAD-encrypted student PIN storage alongside Argon2id pin_hash strictly for ROLE_ADMIN audited credential PDF distribution; Admin/Supervisor credentials remain irreversible; list APIs, CSV exports, slips-for-non-admins, logs, and outbox events remain PIN-free)
+- Added sections: None
+- Removed sections: None
+- Follow-up TODOs: Slice 002 (002-credential-pdf-export) will add schema storage for encrypted student PINs, audited bulk/single PDF endpoints, and UI download actions; remove this Sync Impact Report comment before committing.
+-->
 # StudentPrep Constitution
 
 ## Core Principles
@@ -6,7 +14,7 @@
 All backend code MUST preserve strict Spring Modulith module boundaries (`security`, `student`, `questionbank`, `ingestion`, `exam`, `analytics`, plus `common` and `config`) verified continuously by `ModulithArchitectureTest`. Cross-module mutations MUST NOT invoke sibling repositories directly; modules MUST communicate through local-transaction `ApplicationEventPublisher` events backed by the Transactional Outbox (`event_publication`) with ShedLock-protected `@Scheduled` sweeps and idempotent consumers.
 
 ### II. Zero-Trust Security, Identity & Secrets Hygiene
-Plaintext PINs/passwords and `NoOpPasswordEncoder` are strictly forbidden; all credentials MUST use strong adaptive hashing (BCrypt or Argon2id) and MUST never be returned in list APIs, CSV exports, slips, or outbox logs after creation/reset. Unauthenticated or expired JWT requests MUST return `401 Unauthorized` via an explicit `AuthenticationEntryPoint` (never `403`), access and refresh tokens MUST enforce distinct `token_type` claims, logout MUST verify the token `jti` before revoking Redis sessions, `/api/v1/auth/*` MUST be rate-limited, CORS and cookie flags MUST derive cleanly from environment configuration, and zero raw secrets or debug credentials may be committed or leaked into `ingestion_jobs` error strings.
+Plaintext PINs/passwords and `NoOpPasswordEncoder` are strictly forbidden; all credentials MUST authenticate against strong adaptive hashes (BCrypt or Argon2id), Administrator/Supervisor passwords MUST remain strictly one-way hashed, and student PINs MUST never be returned in list APIs, bulk CSV roster exports, non-admin responses, logs, or outbox events. For single-school exam-day distribution, student login PINs MAY additionally be stored in authenticated AEAD-encrypted form (`AES-GCM` keyed from server environment configuration) alongside their adaptive `pin_hash` strictly for `ROLE_ADMIN`-only, explicitly audited credential PDF downloads (bulk school roster PDF and single-student credential PDF) so slips can be reprinted without rotating active PINs. Unauthenticated or expired JWT requests MUST return `401 Unauthorized` via an explicit `AuthenticationEntryPoint` (never `403`), access and refresh tokens MUST enforce distinct `token_type` claims, logout MUST verify the token `jti` before revoking Redis sessions, `/api/v1/auth/*` MUST be rate-limited, CORS and cookie flags MUST derive cleanly from environment configuration, and zero raw secrets or debug credentials may be committed or leaked into `ingestion_jobs` error strings.
 
 ### III. Exam, Snapshot & Grading Integrity (NON-NEGOTIABLE)
 Every `ExamSession` MUST freeze its selected question IDs, passage contexts, options, and answer keys (along with `shuffle_seed`) at `/start` so live Question Bank edits or archives cannot alter in-flight or historical scoring. The server (`start_time`, `expected_end_time` + explicit latency grace) is the sole authority for exam deadlines and terminal states (`SUBMITTED`, `TIME_EXPIRED`, `FLAGGED_TAB_SWITCH`, `LATE_SUBMISSION_FLAGGED`), read-only transactions MUST NEVER perform writes, `exam_results` MUST enforce `UNIQUE(exam_session_id)` with idempotent grading, and malpractice-terminated sessions MUST NEVER earn valid official result slips or leaderboard rank.
@@ -24,7 +32,7 @@ Backend Java classes MUST use explicit imports (no inline FQNs) and constructor 
 
 - **Stack Baseline:** Java 17 (`pom.xml`), Spring Boot 3.2+, Spring Modulith, PostgreSQL 16 + Flyway, Redis (session `jti` enforcement, question cache, rate limiting, leaderboard), MinIO/S3 object storage with MIME/size validation, Python FastAPI `docling-parser` sidecar (authenticated via `DOCLING_API_KEY`, bounded uploads, deterministic temp-file cleanup), and React + TypeScript + Vite + Tailwind CSS + shadcn/ui + Redux Toolkit + Dexie.js + KaTeX + Workbox.
 - **Availability & Fail-Open Rules:** Read-path exam caching and sync rate limiting MUST degrade safely without crashing an active exam on transient Redis unavailability, while production runtime packaging MUST run behind a reverse proxy routing `/api/v1/*` and expose Actuator health probes.
-- **Role Boundaries:** `ROLE_STUDENT` is restricted to own sessions/results; `ROLE_SUPERVISOR` is read-only for live monitoring and MUST NOT mutate questions, students, or ingestion state; `ROLE_ADMIN` owns administrative CRUD, ingestion, and HITL approval, all audited without high-frequency polling bloat.
+- **Role Boundaries:** `ROLE_STUDENT` is restricted to own sessions/results; `ROLE_SUPERVISOR` is read-only for live monitoring and MUST NOT mutate questions, students, or ingestion state (nor access student credential PDFs); `ROLE_ADMIN` owns administrative CRUD, audited credential PDF downloads, ingestion, and HITL approval, all audited without high-frequency polling bloat.
 
 ## Development Workflow & Verification Gates
 
@@ -35,4 +43,4 @@ Backend Java classes MUST use explicit imports (no inline FQNs) and constructor 
 
 This Constitution supersedes ad-hoc patches, conflicting historical docs, and unverified manual edits across `studentprep`. `.agents/rules/backend-standards.md` and `.agents/rules/ui-standards.md` remain active companion style enforcement rules and MUST stay consistent with this document. Any deviation from a principle requires an explicit amendment recorded here alongside migration/test updates: `MAJOR` bumps remove or redefine existing invariants, `MINOR` bumps add principles or materially expand constraints, and `PATCH` bumps refine wording or non-semantic details. Every specification review, `/speckit-analyze` pass, and PR into `deployment` or `main` MUST verify compliance with all six principles before merge.
 
-**Version**: 1.0.0 | **Ratified**: 2026-11-13 | **Last Amended**: 2026-11-13
+**Version**: 1.1.0 | **Ratified**: 2026-11-13 | **Last Amended**: 2026-11-14
