@@ -221,8 +221,6 @@ export default function ExamDashboard() {
              <div className="font-semibold text-slate-900 whitespace-nowrap">Candidate: {exam.student?.name || 'Unknown'}</div>
              <div className="hidden sm:block w-px h-4 bg-slate-300"></div>
              <div className="font-semibold text-slate-900 whitespace-nowrap">Reg No: {exam.student?.registrationNumber || 'Unknown'}</div>
-             <div className="hidden sm:block w-px h-4 bg-slate-300"></div>
-             <div className="font-semibold text-slate-900 whitespace-nowrap">Center: {exam.student?.examCenter || 'Unknown'}</div>
           </div>
           
           <div className="flex items-center gap-2 overflow-x-auto w-full lg:w-auto pb-2 lg:pb-0 scrollbar-none" role="tablist">

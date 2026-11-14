@@ -4,7 +4,6 @@ import { Button } from './ui/button';
 export interface OneTimePinSlipEntry {
   name: string;
   registrationNumber: string;
-  examCenter?: string | null;
   subjects?: string[];
   oneTimePin: string;
 }
@@ -70,7 +69,7 @@ export default function OneTimePinSlip({
             className="bg-zinc-50 border border-slate-300 rounded-lg p-4 shadow-xs"
           >
             <div className="grid grid-cols-2 gap-y-2 gap-x-4 text-sm">
-              <div>
+              <div className="col-span-2">
                 <div className="text-[11px] uppercase tracking-wider font-semibold text-slate-500">
                   Candidate Name
                 </div>
@@ -81,12 +80,6 @@ export default function OneTimePinSlip({
                   Registration Number
                 </div>
                 <div className="font-mono font-bold text-slate-900">{entry.registrationNumber}</div>
-              </div>
-              <div>
-                <div className="text-[11px] uppercase tracking-wider font-semibold text-slate-500">
-                  Exam Center
-                </div>
-                <div className="font-medium text-slate-900">{entry.examCenter || 'N/A'}</div>
               </div>
               <div>
                 <div className="text-[11px] uppercase tracking-wider font-semibold text-slate-500">

@@ -41,6 +41,17 @@ function sanitizeCsvCell(raw: string): string {
   return `"${neutralized.replace(/"/g, '""')}"`;
 }
 
+function triggerBlobDownload(data: BlobPart, mimeType: string, filename: string): void {
+  const url = window.URL.createObjectURL(new Blob([data], { type: mimeType }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute('download', filename);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+}
+
 export default function StudentsPage() {
   const isAdmin = isAdminRole();
   const [students, setStudents] = useState<StudentSummary[]>([]);
@@ -56,7 +67,6 @@ export default function StudentsPage() {
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createName, setCreateName] = useState('');
-  const [createExamCenter, setCreateExamCenter] = useState('');
   const [createSubjectIds, setCreateSubjectIds] = useState<string[]>([]);
   const [isCreating, setIsCreating] = useState(false);
   const [createdStudent, setCreatedStudent] = useState<CreatedStudentResponse | null>(null);
@@ -64,6 +74,9 @@ export default function StudentsPage() {
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   const [unlockTarget, setUnlockTarget] = useState<StudentSummary | null>(null);
   const [unlockingId, setUnlockingId] = useState<string | null>(null);
+  const [downloadingAllPdf, setDownloadingAllPdf] = useState(false);
+  const [downloadingBatchPdf, setDownloadingBatchPdf] = useState(false);
+  const [downloadingSlipId, setDownloadingSlipId] = useState<string | null>(null);
 
   const refreshStudents = useCallback(async (targetPage = page) => {
     try {
@@ -137,7 +150,6 @@ export default function StudentsPage() {
     try {
       const response = await axios.post('/api/v1/admin/students', {
         name: createName.trim(),
-        examCenter: createExamCenter.trim() || undefined,
         subjectIds: createSubjectIds,
       });
       const created = response.data?.data as CreatedStudentResponse;
@@ -153,20 +165,14 @@ export default function StudentsPage() {
   };
 
   const handleDownloadTemplate = () => {
-    const header = 'Name,Exam Center,Subject 1,Subject 2,Subject 3,Subject 4\n';
+    const header = 'Name,Subject 1,Subject 2,Subject 3,Subject 4\n';
     const subjectNames = availableSubjects.map((s) => s.name);
     const subjectsToUse =
       subjectNames.length >= 4
         ? subjectNames.slice(0, 4)
         : [...subjectNames, 'Mathematics', 'English', 'Biology', 'Chemistry'].slice(0, 4);
-    const sample = `John Doe,CBT Center 1,${subjectsToUse.join(',')}\n`;
-    const blob = new Blob([header + sample], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'student_upload_template.csv';
-    a.click();
-    window.URL.revokeObjectURL(url);
+    const sample = `John Doe,${subjectsToUse.join(',')}\n`;
+    triggerBlobDownload(header + sample, 'text/csv', 'student_upload_template.csv');
   };
 
   const handleDownloadOneTimeBulkCsv = () => {
@@ -178,15 +184,29 @@ export default function StudentsPage() {
           `${sanitizeCsvCell(cred.name)},${sanitizeCsvCell(cred.registrationNumber)},${sanitizeCsvCell(cred.oneTimePin)}`
       )
       .join('\n');
-    const blob = new Blob([header + rows + '\n'], { type: 'text/csv;charset=utf-8;' });
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', 'one_time_onboarding_pins.csv');
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.URL.revokeObjectURL(url);
+    triggerBlobDownload(
+      header + rows + '\n',
+      'text/csv;charset=utf-8;',
+      'one_time_onboarding_pins.csv'
+    );
+  };
+
+  const downloadPdf = async (
+    request: () => Promise<{ data: BlobPart }>,
+    filename: string,
+    successMessage: string,
+    fallbackError: string
+  ): Promise<boolean> => {
+    try {
+      const response = await request();
+      triggerBlobDownload(response.data, 'application/pdf', filename);
+      toast.success(successMessage);
+      return true;
+    } catch (error: unknown) {
+      const msg = await extractProblemMessageAsync(error, fallbackError);
+      toast.error(msg);
+      return false;
+    }
   };
 
   const handleExportRoster = async () => {
@@ -194,14 +214,7 @@ export default function StudentsPage() {
       const response = await axios.get('/api/v1/admin/students/export', {
         responseType: 'blob',
       });
-      const url = window.URL.createObjectURL(new Blob([response.data], { type: 'text/csv' }));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', 'student_roster.csv');
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
+      triggerBlobDownload(response.data, 'text/csv', 'student_roster.csv');
       toast.success('Student roster exported successfully');
     } catch (error: unknown) {
       const msg = await extractProblemMessageAsync(error, 'Failed to export roster');
@@ -209,25 +222,58 @@ export default function StudentsPage() {
     }
   };
 
-  const handleDownloadSlip = async (studentId: string, regNumber: string) => {
+  const handleDownloadAllCredentialsPdf = async () => {
+    setDownloadingAllPdf(true);
     try {
-      const response = await axios.get(`/api/v1/admin/students/${studentId}/slip`, {
-        responseType: 'blob',
-      });
-      const url = window.URL.createObjectURL(
-        new Blob([response.data], { type: 'application/pdf' })
+      const ok = await downloadPdf(
+        () => axios.get('/api/v1/admin/students/credentials/pdf', { responseType: 'blob' }),
+        'student_credentials_roster.pdf',
+        'Student credentials PDF downloaded successfully',
+        'Failed to download student credentials PDF'
       );
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `${regNumber}-slip.pdf`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-      toast.success('Registration slip downloaded successfully');
-    } catch (error: unknown) {
-      const msg = await extractProblemMessageAsync(error, 'Failed to download slip');
-      toast.error(msg);
+      if (ok && students.some((student) => student.pinResetRequired)) {
+        await refreshStudents();
+      }
+    } finally {
+      setDownloadingAllPdf(false);
+    }
+  };
+
+  const handleDownloadBatchCredentialsPdf = async () => {
+    if (!bulkResult?.credentials?.length) return;
+    setDownloadingBatchPdf(true);
+    try {
+      const registrationNumbers = bulkResult.credentials.map((cred) => cred.registrationNumber);
+      await downloadPdf(
+        () =>
+          axios.post(
+            '/api/v1/admin/students/credentials/pdf',
+            { registrationNumbers },
+            { responseType: 'blob' }
+          ),
+        'batch_credentials_roster.pdf',
+        'Batch credentials PDF downloaded successfully',
+        'Failed to download batch credentials PDF'
+      );
+    } finally {
+      setDownloadingBatchPdf(false);
+    }
+  };
+
+  const handleDownloadSlip = async (student: StudentSummary) => {
+    setDownloadingSlipId(student.id);
+    try {
+      const ok = await downloadPdf(
+        () => axios.get(`/api/v1/admin/students/${student.id}/slip`, { responseType: 'blob' }),
+        `${student.registrationNumber}-slip.pdf`,
+        'Credential slip PDF downloaded successfully',
+        'Failed to download slip'
+      );
+      if (ok && student.pinResetRequired) {
+        await refreshStudents();
+      }
+    } finally {
+      setDownloadingSlipId(null);
     }
   };
 
@@ -252,7 +298,6 @@ export default function StudentsPage() {
 
   const openCreateModal = () => {
     setCreateName('');
-    setCreateExamCenter('');
     setCreateSubjectIds([]);
     setCreatedStudent(null);
     setShowCreateModal(true);
@@ -301,16 +346,29 @@ export default function StudentsPage() {
         {isAdmin && (
           <div className="flex flex-wrap items-center gap-2.5">
             {students.length > 0 && (
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleExportRoster}
-                className="border-slate-300 bg-zinc-50 hover:bg-slate-100 text-slate-900"
-                title="Export student directory roster without PINs"
-              >
-                <Download className="w-4 h-4 mr-1.5 text-slate-700" />
-                Export Roster (CSV)
-              </Button>
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleExportRoster}
+                  className="border-slate-300 bg-zinc-50 hover:bg-slate-100 text-slate-900"
+                  title="Export student directory roster without PINs"
+                >
+                  <Download className="w-4 h-4 mr-1.5 text-slate-700" />
+                  Export Roster (CSV)
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleDownloadAllCredentialsPdf}
+                  disabled={downloadingAllPdf}
+                  className="border-[#008751] text-[#008751] bg-zinc-50 hover:bg-emerald-50"
+                  title="Download printable PDF roster of all registered students with active login PINs"
+                >
+                  <FileText className="w-4 h-4 mr-1.5" />
+                  {downloadingAllPdf ? 'Downloading PDF...' : 'Download All Credentials (PDF)'}
+                </Button>
+              </>
             )}
             <Button
               type="button"
@@ -344,7 +402,6 @@ export default function StudentsPage() {
                 <th className="p-4">Registration Number</th>
                 <th className="p-4">Credential Status</th>
                 <th className="p-4">Session Status</th>
-                <th className="p-4">Exam Center</th>
                 <th className="p-4 text-right">Actions</th>
               </tr>
             </thead>
@@ -382,7 +439,6 @@ export default function StudentsPage() {
                       </span>
                     )}
                   </td>
-                  <td className="p-4 text-slate-700 text-sm">{student.examCenter || 'N/A'}</td>
                   <td className="p-4 text-right">
                     <div className="flex justify-end gap-2">
                       <button
@@ -411,11 +467,10 @@ export default function StudentsPage() {
                       {isAdmin && (
                         <button
                           type="button"
-                          onClick={() =>
-                            handleDownloadSlip(student.id, student.registrationNumber)
-                          }
-                          className="inline-flex items-center gap-1.5 px-3 py-1 bg-slate-50 border border-[#008751]/40 text-[#008751] hover:bg-emerald-50 rounded-md text-xs font-semibold shadow-xs transition-colors cursor-pointer"
-                          title="Download registration slip PDF (PIN redacted)"
+                          onClick={() => handleDownloadSlip(student)}
+                          disabled={downloadingSlipId === student.id}
+                          className="inline-flex items-center gap-1.5 px-3 py-1 bg-slate-50 border border-[#008751]/40 text-[#008751] hover:bg-emerald-50 rounded-md text-xs font-semibold shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                          title="Download credential slip PDF with active PIN"
                         >
                           <FileText className="w-3.5 h-3.5" />
                           Slip
@@ -427,7 +482,7 @@ export default function StudentsPage() {
               ))}
               {students.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="p-8 text-center text-slate-600 text-sm">
+                  <td colSpan={5} className="p-8 text-center text-slate-600 text-sm">
                     No students registered yet.
                     {isAdmin && ' Click "Register Student" or "Bulk Register CSV" to enroll candidates.'}
                   </td>
@@ -489,7 +544,6 @@ export default function StudentsPage() {
                   {
                     name: createdStudent.name,
                     registrationNumber: createdStudent.registrationNumber,
-                    examCenter: createdStudent.examCenter,
                     subjects: createdStudent.subjects?.map((s) => s.name),
                     oneTimePin: createdStudent.oneTimePin,
                   },
@@ -510,20 +564,6 @@ export default function StudentsPage() {
                     value={createName}
                     onChange={(e) => setCreateName(e.target.value)}
                     placeholder="e.g. Ada Lovelace"
-                    className="w-full px-3 py-2 bg-zinc-50 border border-slate-300 rounded-md text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#008751]"
-                  />
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="create-student-center" className="text-slate-900">
-                    Exam Center
-                  </Label>
-                  <input
-                    id="create-student-center"
-                    type="text"
-                    value={createExamCenter}
-                    onChange={(e) => setCreateExamCenter(e.target.value)}
-                    placeholder="e.g. CBT Center 1"
                     className="w-full px-3 py-2 bg-zinc-50 border border-slate-300 rounded-md text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#008751]"
                   />
                 </div>
@@ -647,17 +687,31 @@ export default function StudentsPage() {
                 <div className="p-4 bg-zinc-50 rounded-lg border border-slate-200">
                   <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                     <h3 className="font-bold text-lg text-slate-900">Upload Results</h3>
-                    {bulkResult.credentials && bulkResult.credentials.length > 0 && (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={handleDownloadOneTimeBulkCsv}
-                        className="border-[#008751] text-[#008751] hover:bg-emerald-50"
-                      >
-                        <Download className="w-3.5 h-3.5 mr-1.5" />
-                        Download One-Time PINs (CSV)
-                      </Button>
+                    {isAdmin && bulkResult.credentials && bulkResult.credentials.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={handleDownloadOneTimeBulkCsv}
+                          className="border-[#008751] text-[#008751] bg-zinc-50 hover:bg-emerald-50"
+                        >
+                          <Download className="w-3.5 h-3.5 mr-1.5" />
+                          Download One-Time PINs (CSV)
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={handleDownloadBatchCredentialsPdf}
+                          disabled={downloadingBatchPdf}
+                          className="bg-[#008751] hover:bg-[#007040] text-white"
+                        >
+                          <FileText className="w-3.5 h-3.5 mr-1.5" />
+                          {downloadingBatchPdf
+                            ? 'Downloading PDF...'
+                            : 'Download Batch Credentials (PDF)'}
+                        </Button>
+                      </div>
                     )}
                   </div>
                   <p className="text-slate-900 text-sm">

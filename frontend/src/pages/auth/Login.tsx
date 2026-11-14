@@ -150,7 +150,7 @@ export default function Login() {
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value.toUpperCase())}
               className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#008751] focus:border-transparent text-slate-900"
-              placeholder="e.g. 12345678AB"
+              placeholder="e.g. 123456JF"
             />
           </div>
           <div className="flex flex-col gap-1.5">

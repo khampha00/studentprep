@@ -1,4 +1,5 @@
-import { test, expect, type Page } from '@playwright/test';
+import { inflateSync } from 'node:zlib';
+import { test, expect, type Download, type Page } from '@playwright/test';
 
 const ADMIN_ID = process.env.E2E_ADMIN_ID || 'ADMIN-001';
 const ADMIN_PIN = process.env.E2E_ADMIN_PIN || 'admin123';
@@ -7,6 +8,44 @@ const SUPERVISOR_PIN = process.env.E2E_SUPERVISOR_PIN || 'sup123456';
 
 function createRunTag(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`.toUpperCase();
+}
+
+async function readDownloadBuffer(download: Download): Promise<Buffer> {
+  const stream = await download.createReadStream();
+  expect(stream).toBeTruthy();
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream!) {
+    chunks.push(Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
+function extractOpenPdfText(pdfBuffer: Buffer): string {
+  expect(pdfBuffer.subarray(0, 5).toString('ascii')).toBe('%PDF-');
+  const raw = pdfBuffer.toString('latin1');
+  const sections: string[] = [raw];
+  const streamRegex = /stream(?:\r\n|\n|\r)([\s\S]*?)endstream/g;
+  for (const match of raw.matchAll(streamRegex)) {
+    const candidate = match[1].replace(/(?:\r\n|\n|\r)$/, '');
+    const body = Buffer.from(candidate, 'latin1');
+    try {
+      sections.push(inflateSync(body).toString('latin1'));
+    } catch {
+      sections.push(candidate);
+    }
+  }
+  const combined = sections.join('\n');
+  const tokens: string[] = [];
+  const parenRegex = /\(([^()\\]*(?:\\.[^()\\]*)*)\)/g;
+  for (const match of combined.matchAll(parenRegex)) {
+    tokens.push(
+      match[1]
+        .replace(/\\([()\\])/g, '$1')
+        .replace(/\\n/g, '\n')
+        .replace(/\\r/g, '\r')
+    );
+  }
+  return `${combined}\n${tokens.join(' ')}\n${tokens.join('')}`;
 }
 
 function decodeRoleFromJwt(token: string | null): string | null {
@@ -142,7 +181,6 @@ async function findStudentRow(page: Page, registrationNumber: string) {
 async function createStudentViaUi(
   page: Page,
   candidateName: string,
-  examCenter: string,
   preferExamSubjects = false
 ): Promise<{ registrationNumber: string; oneTimePin: string }> {
   await page.getByRole('button', { name: 'Register Student' }).click();
@@ -150,9 +188,10 @@ async function createStudentViaUi(
 
   await expect(page.locator('form input[type="password"]')).toHaveCount(0);
   await expect(page.locator('form label', { hasText: /^PIN/i })).toHaveCount(0);
+  await expect(page.locator('#create-student-center')).toHaveCount(0);
+  await expect(page.locator('form')).not.toContainText(/Exam Center/i);
 
   await page.locator('#create-student-name').fill(candidateName);
-  await page.locator('#create-student-center').fill(examCenter);
 
   const subjectCheckboxes = page.locator('form input[type="checkbox"]');
   await expect(subjectCheckboxes.first()).toBeVisible({ timeout: 10000 });
@@ -182,6 +221,7 @@ async function createStudentViaUi(
 
   const slip = page.getByTestId('one-time-pin-slip');
   await expect(slip).toBeVisible({ timeout: 15000 });
+  await expect(slip).not.toContainText(/Exam Center/i);
 
   const oneTimePin = (await slip.getByTestId('revealed-one-time-pin').innerText()).trim();
   expect(oneTimePin).toMatch(/^\d{5}$/);
@@ -189,7 +229,7 @@ async function createStudentViaUi(
   const regText = (
     await slip.locator('div.font-mono.font-bold.text-slate-900').first().innerText()
   ).trim();
-  expect(regText).toBeTruthy();
+  expect(regText).toMatch(/^\d{6}[A-Z]{2}$/);
 
   await slip.getByRole('button', { name: 'Done', exact: true }).click();
   await expect(slip).toBeHidden();
@@ -198,6 +238,12 @@ async function createStudentViaUi(
 }
 
 test.describe.serial('Auth, Identity & Secrets Hardening (Unmocked)', () => {
+  test.beforeEach(({ browserName }) => {
+    if (browserName === 'webkit') {
+      test.slow();
+    }
+  });
+
   test('T037.1: Admin login omits hardcoded hints, sanitizes invalid auth errors, and cleanly logs out', async ({
     page,
   }) => {
@@ -244,7 +290,7 @@ test.describe.serial('Auth, Identity & Secrets Hardening (Unmocked)', () => {
     }
   });
 
-  test('T037.2: Q1 Single & Bulk CSV one-time PIN reveal, zero plaintext roster/API exposure, redacted slip, and PIN reset', async ({
+  test('T037.2: Q1 Single & Bulk CSV one-time PIN reveal, zero plaintext roster/API exposure, credential PDF exports & login stability, and PIN reset', async ({
     browser,
     page,
   }) => {
@@ -262,10 +308,11 @@ test.describe.serial('Auth, Identity & Secrets Hardening (Unmocked)', () => {
 
       const headerRowText = await page.locator('thead tr').innerText();
       expect(headerRowText).not.toMatch(/Login PIN/i);
+      expect(headerRowText).not.toMatch(/Exam Center/i);
       expect(headerRowText).toContain('Credential Status');
       expect(headerRowText).toContain('Session Status');
 
-      const created = await createStudentViaUi(page, candidateName, 'Center Alpha', true);
+      const created = await createStudentViaUi(page, candidateName, true);
       const singleRow = await findStudentRow(page, created.registrationNumber);
       const singleRowText = await singleRow.innerText();
       expect(singleRowText).toContain('Hashed');
@@ -279,6 +326,8 @@ test.describe.serial('Auth, Identity & Secrets Hardening (Unmocked)', () => {
       const studentsJsonText = await studentsApiRes.text();
       expect(studentsJsonText).not.toContain('"pin":');
       expect(studentsJsonText).not.toContain('"pinHash":');
+      expect(studentsJsonText).not.toContain('"pinCiphertext":');
+      expect(studentsJsonText).not.toContain('"examCenter"');
       expect(studentsJsonText).not.toContain(created.oneTimePin);
 
       await page.getByRole('button', { name: 'Bulk Register CSV' }).click();
@@ -292,7 +341,7 @@ test.describe.serial('Auth, Identity & Secrets Hardening (Unmocked)', () => {
           ? (await firstSubjectChip.innerText()).trim()
           : 'MATHEMATICS';
 
-      const csvBody = `Name,Exam Center,Subject 1,Subject 2,Subject 3,Subject 4\n${bulkCandidateName},Center Beta,${bulkSubject},,,\n`;
+      const csvBody = `Name,Subject 1,Subject 2,Subject 3,Subject 4\n${bulkCandidateName},${bulkSubject},,,\n`;
       await page.locator('#bulk-csv-file').setInputFiles({
         name: `roster-${runTag}.csv`,
         mimeType: 'text/csv',
@@ -304,6 +353,9 @@ test.describe.serial('Auth, Identity & Secrets Hardening (Unmocked)', () => {
         timeout: 15000,
       });
       await expect(page.getByRole('button', { name: 'Download One-Time PINs (CSV)' })).toBeVisible();
+      await expect(
+        page.getByRole('button', { name: 'Download Batch Credentials (PDF)' })
+      ).toBeVisible();
       const bulkSlip = page.getByTestId('one-time-pin-slip');
       await expect(bulkSlip).toBeVisible();
       const bulkPin = (await bulkSlip.getByTestId('revealed-one-time-pin').first().innerText()).trim();
@@ -311,6 +363,19 @@ test.describe.serial('Auth, Identity & Secrets Hardening (Unmocked)', () => {
       const bulkReg = (
         await bulkSlip.locator('div.font-mono.font-bold.text-slate-900').first().innerText()
       ).trim();
+      expect(bulkReg).toMatch(/^\d{6}[A-Z]{2}$/);
+
+      const batchPdfDownloadPromise = page.waitForEvent('download');
+      await page.getByRole('button', { name: 'Download Batch Credentials (PDF)' }).click();
+      const batchPdfDownload = await batchPdfDownloadPromise;
+      expect(batchPdfDownload.suggestedFilename()).toBe('batch_credentials_roster.pdf');
+      const batchPdfText = extractOpenPdfText(await readDownloadBuffer(batchPdfDownload));
+      expect(batchPdfText).toContain('StudentPrep Examination Credential Roster');
+      expect(batchPdfText).toContain(bulkCandidateName);
+      expect(batchPdfText).toContain(bulkReg);
+      expect(batchPdfText).toContain(bulkPin);
+      expect(batchPdfText).not.toContain(created.registrationNumber);
+      expect(batchPdfText).not.toMatch(/Exam Center/i);
 
       await page.getByRole('button', { name: 'Close', exact: true }).click();
 
@@ -322,20 +387,52 @@ test.describe.serial('Auth, Identity & Secrets Hardening (Unmocked)', () => {
       const csvDownload = await csvDownloadPromise;
       expect(csvDownload.suggestedFilename()).toBe('student_roster.csv');
 
-      const csvStream = await csvDownload.createReadStream();
-      expect(csvStream).toBeTruthy();
-      const chunks: Buffer[] = [];
-      for await (const chunk of csvStream!) {
-        chunks.push(Buffer.from(chunk));
-      }
-      const exportedCsv = Buffer.concat(chunks).toString('utf8');
+      const exportedCsv = (await readDownloadBuffer(csvDownload)).toString('utf8');
       const exportedLines = exportedCsv.trim().split(/\r?\n/);
       expect(exportedLines[0]).not.toMatch(/pin|password/i);
+      expect(exportedLines[0]).not.toMatch(/Exam Center/i);
       const exportedCandidateLine = exportedLines.find((line) =>
         line.includes(created.registrationNumber)
       );
       expect(exportedCandidateLine).toBeTruthy();
       expect(exportedCandidateLine).not.toContain(created.oneTimePin);
+      expect(exportedCsv).not.toContain(bulkPin);
+
+      const allPdfDownloadPromise1 = page.waitForEvent('download');
+      await page.getByRole('button', { name: 'Download All Credentials (PDF)' }).click();
+      const allPdfDownload1 = await allPdfDownloadPromise1;
+      expect(allPdfDownload1.suggestedFilename()).toBe('student_credentials_roster.pdf');
+      const allPdfText1 = extractOpenPdfText(await readDownloadBuffer(allPdfDownload1));
+      expect(allPdfText1).toContain(created.registrationNumber);
+      expect(allPdfText1).toContain(created.oneTimePin);
+      expect(allPdfText1).toContain(bulkReg);
+      expect(allPdfText1).toContain(bulkPin);
+      expect(allPdfText1).not.toMatch(/Exam Center/i);
+
+      // Repeat bulk credential PDF download preserves exact active PINs without rotation
+      const allPdfDownloadPromise2 = page.waitForEvent('download');
+      await page.getByRole('button', { name: 'Download All Credentials (PDF)' }).click();
+      const allPdfDownload2 = await allPdfDownloadPromise2;
+      expect(allPdfDownload2.suggestedFilename()).toBe('student_credentials_roster.pdf');
+      const allPdfText2 = extractOpenPdfText(await readDownloadBuffer(allPdfDownload2));
+      expect(allPdfText2).toContain(created.registrationNumber);
+      expect(allPdfText2).toContain(created.oneTimePin);
+      expect(allPdfText2).toContain(bulkReg);
+      expect(allPdfText2).toContain(bulkPin);
+      expect(allPdfText2).not.toMatch(/Exam Center/i);
+
+      // Bulk-imported student can log in on / using the PIN printed in the batch/bulk PDFs
+      await loginStudent(studentPage, bulkReg, bulkPin);
+      await expect(studentPage).toHaveURL(/\/dashboard/, { timeout: 15000 });
+      await expect(studentPage.locator('button', { hasText: 'Start Examination' })).toBeVisible();
+      const bulkStudentToken = await studentPage.evaluate(() => localStorage.getItem('token'));
+      expect(bulkStudentToken).toBeTruthy();
+      const studentForbiddenBulkRes = await studentPage.request.get(
+        '/api/v1/admin/students/credentials/pdf',
+        { headers: { Authorization: `Bearer ${bulkStudentToken}` } }
+      );
+      expect(studentForbiddenBulkRes.status()).toBe(403);
+      await logoutViaApi(studentPage);
 
       const refreshedSingleRow = await findStudentRow(page, created.registrationNumber);
 
@@ -343,18 +440,24 @@ test.describe.serial('Auth, Identity & Secrets Hardening (Unmocked)', () => {
       await refreshedSingleRow.getByRole('button', { name: 'Slip', exact: true }).click();
       const slipDownload = await slipDownloadPromise;
       expect(slipDownload.suggestedFilename()).toMatch(/-slip\.pdf$|slip\.pdf/i);
-      const pdfStream = await slipDownload.createReadStream();
-      expect(pdfStream).toBeTruthy();
-      const pdfChunks: Buffer[] = [];
-      for await (const chunk of pdfStream!) {
-        pdfChunks.push(Buffer.from(chunk));
-      }
-      const pdfHeader = Buffer.concat(pdfChunks).subarray(0, 5).toString('ascii');
-      expect(pdfHeader).toBe('%PDF-');
+      const rowSlipPdfText = extractOpenPdfText(await readDownloadBuffer(slipDownload));
+      expect(rowSlipPdfText).toContain(created.registrationNumber);
+      expect(rowSlipPdfText).toContain(`Login PIN: ${created.oneTimePin}`);
+      expect(rowSlipPdfText).not.toMatch(/Exam Center/i);
 
       await refreshedSingleRow.getByRole('button', { name: 'View Profile', exact: true }).click();
       await expect(page.getByText('Basic Info, Credentials & Session Status')).toBeVisible();
-      await expect(page.getByText('Hashed (Never Readable)')).toBeVisible();
+      await expect(page.getByText('Active (Credential PDF Ready)')).toBeVisible();
+      await expect(page.getByText(/Exam Center/i)).toHaveCount(0);
+
+      const modalSlipDownloadPromise = page.waitForEvent('download');
+      await page.getByRole('button', { name: 'Download Credential PDF' }).click();
+      const modalSlipDownload = await modalSlipDownloadPromise;
+      expect(modalSlipDownload.suggestedFilename()).toBe(`${created.registrationNumber}-slip.pdf`);
+      const modalSlipPdfText = extractOpenPdfText(await readDownloadBuffer(modalSlipDownload));
+      expect(modalSlipPdfText).toContain(created.registrationNumber);
+      expect(modalSlipPdfText).toContain(`Login PIN: ${created.oneTimePin}`);
+      expect(modalSlipPdfText).not.toMatch(/Exam Center/i);
 
       await page.getByRole('button', { name: 'Regenerate PIN' }).click();
       const resetDialog = page.getByRole('alertdialog');
@@ -368,6 +471,15 @@ test.describe.serial('Auth, Identity & Secrets Hardening (Unmocked)', () => {
       expect(newPin).not.toBe(created.oneTimePin);
 
       await resetSlip.getByRole('button', { name: 'Dismiss Slip' }).click();
+
+      const updatedSlipDownloadPromise = page.waitForEvent('download');
+      await page.getByRole('button', { name: 'Download Credential PDF' }).click();
+      const updatedSlipDownload = await updatedSlipDownloadPromise;
+      const updatedSlipPdfText = extractOpenPdfText(await readDownloadBuffer(updatedSlipDownload));
+      expect(updatedSlipPdfText).toContain(`Login PIN: ${newPin}`);
+      expect(updatedSlipPdfText).not.toContain(`Login PIN: ${created.oneTimePin}`);
+      expect(updatedSlipPdfText).not.toMatch(/Exam Center/i);
+
       await page.getByRole('button', { name: 'Close student profile modal' }).click();
 
       const oldPinPromise = studentPage.waitForResponse(
@@ -407,12 +519,7 @@ test.describe.serial('Auth, Identity & Secrets Hardening (Unmocked)', () => {
         adminPage.getByRole('heading', { name: 'Students', exact: true })
       ).toBeVisible();
 
-      const student = await createStudentViaUi(
-        adminPage,
-        `Exam Lock ${runTag}`,
-        'Exam Center Q2',
-        true
-      );
+      const student = await createStudentViaUi(adminPage, `Exam Lock ${runTag}`, true);
 
       await loginStudent(pageA, student.registrationNumber, student.oneTimePin);
       await expect(pageA).toHaveURL(/\/dashboard/, { timeout: 15000 });
@@ -517,7 +624,7 @@ test.describe.serial('Auth, Identity & Secrets Hardening (Unmocked)', () => {
     try {
       await loginStaff(adminPage, ADMIN_ID, ADMIN_PIN);
       await adminPage.getByRole('link', { name: 'Students' }).click();
-      const student = await createStudentViaUi(adminPage, `RBAC E2E ${runTag}`, 'Center RBAC');
+      const student = await createStudentViaUi(adminPage, `RBAC E2E ${runTag}`);
       await logoutViaApi(adminPage);
 
       await loginStudent(studentPage, student.registrationNumber, student.oneTimePin);
@@ -541,6 +648,9 @@ test.describe.serial('Auth, Identity & Secrets Hardening (Unmocked)', () => {
       await expect(supervisorPage.getByRole('button', { name: 'Export Roster (CSV)' })).toHaveCount(
         0
       );
+      await expect(
+        supervisorPage.getByRole('button', { name: 'Download All Credentials (PDF)' })
+      ).toHaveCount(0);
       await expect(supervisorPage.getByRole('button', { name: 'Unlock Session' })).toHaveCount(0);
       await expect(supervisorPage.getByRole('button', { name: 'Slip', exact: true })).toHaveCount(
         0
@@ -553,6 +663,9 @@ test.describe.serial('Auth, Identity & Secrets Hardening (Unmocked)', () => {
       ).toBeVisible();
 
       await expect(supervisorPage.getByRole('button', { name: 'Edit Profile' })).toHaveCount(0);
+      await expect(
+        supervisorPage.getByRole('button', { name: 'Download Credential PDF' })
+      ).toHaveCount(0);
       await expect(supervisorPage.getByRole('button', { name: 'Regenerate PIN' })).toHaveCount(0);
       await expect(
         supervisorPage.getByRole('button', { name: 'Unlock Active Session' })
@@ -561,9 +674,24 @@ test.describe.serial('Auth, Identity & Secrets Hardening (Unmocked)', () => {
 
       const supCreateRes = await supervisorPage.request.post('/api/v1/admin/students', {
         headers: { Authorization: `Bearer ${supToken}` },
-        data: { name: 'Unauthorized Create', examCenter: 'Test', subjectIds: [] },
+        data: { name: 'Unauthorized Create', subjectIds: [] },
       });
       expect(supCreateRes.status()).toBe(403);
+
+      const supBulkPdfRes = await supervisorPage.request.get(
+        '/api/v1/admin/students/credentials/pdf',
+        { headers: { Authorization: `Bearer ${supToken}` } }
+      );
+      expect(supBulkPdfRes.status()).toBe(403);
+
+      const supBatchPdfRes = await supervisorPage.request.post(
+        '/api/v1/admin/students/credentials/pdf',
+        {
+          headers: { Authorization: `Bearer ${supToken}` },
+          data: { registrationNumbers: [student.registrationNumber] },
+        }
+      );
+      expect(supBatchPdfRes.status()).toBe(403);
 
       const listRes = await supervisorPage.request.get('/api/v1/admin/students?page=0&size=1', {
         headers: { Authorization: `Bearer ${supToken}` },
@@ -572,6 +700,12 @@ test.describe.serial('Auth, Identity & Secrets Hardening (Unmocked)', () => {
       const listJson = (await listRes.json()) as { data?: Array<{ id: string }> };
       const firstId = listJson.data?.[0]?.id;
       expect(firstId).toBeTruthy();
+
+      const supSlipRes = await supervisorPage.request.get(
+        `/api/v1/admin/students/${firstId}/slip`,
+        { headers: { Authorization: `Bearer ${supToken}` } }
+      );
+      expect(supSlipRes.status()).toBe(403);
 
       const supResetRes = await supervisorPage.request.post(
         `/api/v1/admin/students/${firstId}/reset-pin`,
@@ -610,7 +744,7 @@ test.describe.serial('Auth, Identity & Secrets Hardening (Unmocked)', () => {
     try {
       await loginStaff(adminPage, ADMIN_ID, ADMIN_PIN);
       await adminPage.getByRole('link', { name: 'Students' }).click();
-      const target = await createStudentViaUi(adminPage, `Lockout ${runTag}`, 'Center RL');
+      const target = await createStudentViaUi(adminPage, `Lockout ${runTag}`);
       await logoutViaApi(adminPage);
 
       await attackerPage.goto('/');

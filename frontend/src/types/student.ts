@@ -7,7 +7,6 @@ export interface StudentSummary {
   id: string;
   name: string;
   registrationNumber: string;
-  examCenter?: string | null;
   pinResetRequired?: boolean;
   hasActiveSession?: boolean;
   subjects?: SubjectOption[];
@@ -15,13 +14,11 @@ export interface StudentSummary {
 
 export interface CreateStudentRequest {
   name: string;
-  examCenter?: string;
   subjectIds: string[];
 }
 
 export interface UpdateStudentRequest {
   name: string;
-  examCenter?: string;
   subjectIds: string[];
 }
 
@@ -29,7 +26,6 @@ export interface CreatedStudentResponse {
   id: string;
   name: string;
   registrationNumber: string;
-  examCenter?: string | null;
   subjects?: SubjectOption[];
   oneTimePin: string;
 }
