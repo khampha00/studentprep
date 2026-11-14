@@ -34,15 +34,16 @@ public class Student {
     @Column(nullable = false)
     private String name;
 
-    @Column(name = "exam_center")
-    private String examCenter;
-
     @Column(name = "registration_number", nullable = false, unique = true, length = 50)
     private String registrationNumber;
 
     @JsonIgnore
     @Column(name = "pin_hash", nullable = false)
     private String pinHash;
+
+    @JsonIgnore
+    @Column(name = "pin_ciphertext", columnDefinition = "TEXT")
+    private String pinCiphertext;
 
     @Column(name = "pin_reset_required", nullable = false)
     private boolean pinResetRequired;

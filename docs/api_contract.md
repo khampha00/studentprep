@@ -48,8 +48,8 @@ All endpoints (except `/api/v1/auth/login`, `/api/v1/auth/refresh`, `/api/v1/aut
 *   **Evicted Session:** If the presented `jti` no longer matches Redis `session:<CANONICAL_ID>`, protected endpoints return `401 Unauthorized` with `detail: "Session active on another device"` and `code: "SESSION_EVICTED"`.
 *   **Role Separation:**
     *   `ROLE_STUDENT`: Exam execution (`/api/v1/exams/**`) and own results (`/api/v1/students/me/**`, `/api/v1/student/results`).
-    *   `ROLE_SUPERVISOR`: Read-only monitoring & directory views (`GET /api/v1/admin/analytics/**`, `GET /api/v1/admin/questions`, `GET /api/v1/admin/subjects`, `GET /api/v1/admin/students`, `GET /api/v1/admin/students/{id}`, `GET /api/v1/admin/students/{id}/results`). Mutating admin routes, `/export`, and `/*/slip` are forbidden (`403`).
-    *   `ROLE_ADMIN`: Full administrative CRUD, PIN reset, workstation unlock, CSV exports, ingestion, and HITL question approval.
+    *   `ROLE_SUPERVISOR`: Read-only monitoring & directory views (`GET /api/v1/admin/analytics/**`, `GET /api/v1/admin/questions`, `GET /api/v1/admin/subjects`, `GET /api/v1/admin/students`, `GET /api/v1/admin/students/{id}`, `GET /api/v1/admin/students/{id}/results`). Mutating admin routes, `/export`, `/api/v1/admin/students/credentials/pdf` (`GET` & `POST`), and `/*/slip` are forbidden (`403`).
+    *   `ROLE_ADMIN`: Full administrative CRUD, PIN reset, workstation unlock, CSV & credential PDF exports, ingestion, and HITL question approval.
 
 ---
 
@@ -61,7 +61,7 @@ Authenticates a user (Student or Admin) and issues an Access Token and `refreshT
 **Request Body:**
 ```json
 {
-  "identifier": "JAMB-2026-X7Y8Z9",
+  "identifier": "123456JF",
   "pin": "49281"
 }
 ```
@@ -99,13 +99,15 @@ Verifies caller `jti` ownership (via `Authorization` header allowing expired ver
 
 ## 2.5 Student Identity & Onboarding (`student` boundary — Admin Facing)
 
-*   `POST /api/v1/admin/students` (`ROLE_ADMIN`): Creates candidate, generates one-time random 5-digit PIN, stores strictly hashed (`pin_hash`), returns `oneTimePin` **once** in response JSON.
-*   `POST /api/v1/admin/students/bulk` (`ROLE_ADMIN`): Imports CSV cohort, returns `{ "data": { "created", "errors", "credentials": [{ "name", "registrationNumber", "oneTimePin" }] } }` **once**.
-*   `POST /api/v1/admin/students/{id}/reset-pin` (`ROLE_ADMIN`): Generates new one-time PIN, updates `pin_hash`, clears `pinResetRequired`, revokes active Redis session/unlock keys, returns `{ "data": { "newPin", "registrationNumber" } }` **once**.
+*   `POST /api/v1/admin/students` (`ROLE_ADMIN`): Creates candidate, generates one-time random 5-digit PIN, stores both irreversible authentication hash (`pin_hash`) and AES-256-GCM encrypted copy (`pin_ciphertext`), and returns `oneTimePin` **once** in response JSON.
+*   `POST /api/v1/admin/students/bulk` (`ROLE_ADMIN`): Imports CSV cohort, persists `pin_hash` + `pin_ciphertext` atomically for each created student, and returns `{ "data": { "created", "errors", "credentials": [{ "name", "registrationNumber", "oneTimePin" }] } }` **once**.
+*   `POST /api/v1/admin/students/{id}/reset-pin` (`ROLE_ADMIN`): Generates new one-time 5-digit PIN, updates both `pin_hash` and `pin_ciphertext`, clears `pinResetRequired`, revokes active Redis session/unlock keys, and returns `{ "data": { "newPin", "registrationNumber" } }` **once**.
 *   `POST /api/v1/admin/students/{id}/unlock-session` (`ROLE_ADMIN`): Evicts current workstation `session:<CANONICAL_ID>` and writes a 15-minute single-use `exam_unlock:<CANONICAL_ID>` permit (audited in `audit_logs`) so an interrupted candidate may resume on a replacement workstation.
-*   `GET /api/v1/admin/students` & `GET /api/v1/admin/students/{id}`: Returns student metadata (`id`, `name`, `registrationNumber`, `examCenter`, `pinResetRequired`, `hasActiveSession`, `subjects`) with **no PIN or hash fields**.
-*   `GET /api/v1/admin/students/export` (`ROLE_ADMIN`): Downloads CSV roster (`Name,Registration Number,Exam Center,Registered Subjects`) with spreadsheet formula sanitization and **zero PIN columns**.
-*   `GET /api/v1/admin/students/{id}/slip` (`ROLE_ADMIN`): Downloads registration slip PDF with masked/redacted PIN status notice.
+*   `GET /api/v1/admin/students` & `GET /api/v1/admin/students/{id}`: Returns student metadata (`id`, `name`, `registrationNumber`, `pinResetRequired`, `hasActiveSession`, `subjects`) with **no PIN, hash, or ciphertext fields**.
+*   `GET /api/v1/admin/students/export` (`ROLE_ADMIN`): Downloads CSV roster (`Name,Registration Number,Registered Subjects`) with spreadsheet formula sanitization and **zero PIN columns**.
+*   `GET /api/v1/admin/students/credentials/pdf` (`ROLE_ADMIN`, audited via `AuditLogAspect`): Downloads consolidated multi-page A4 OpenPDF credential roster (`Content-Type: application/pdf`, `Cache-Control: no-store`, attachment filename `student_credentials_roster.pdf`). Includes all registered students ordered deterministically by `name ASC, registrationNumber ASC`. Renders title banner, generation timestamp, candidate count, repeating table headers (`#`, `Candidate Name`, `Registration Number`, `Login PIN`), or `"No registered students found."` when empty. Preserves existing active PINs without disrupting active exam sessions, and auto-provisions a 5-digit PIN once for legacy/unissued candidates (`pinResetRequired = true` or `pin_ciphertext IS NULL`). Returns RFC 7807 `ProblemDetail` on `401 Unauthorized`, `403 Forbidden` (non-`ROLE_ADMIN` including `ROLE_SUPERVISOR`), or `500 Internal Server Error` (AEAD key mismatch / corrupt ciphertext or PDF I/O failure).
+*   `POST /api/v1/admin/students/credentials/pdf` (`ROLE_ADMIN`, audited via `AuditLogAspect`): Accepts `{ "registrationNumbers": ["123456JF", ...] }` (`@NotEmpty`, `@Size(min = 1, max = 5000)`, non-blank entries; invalid body returns RFC 7807 `400 Bad Request`). Downloads batch A4 OpenPDF credential roster (`Content-Type: application/pdf`, `Cache-Control: no-store`, attachment filename `batch_credentials_roster.pdf`) built strictly from PostgreSQL student records matching `registrationNumbers` (client never supplies PINs), with the same active-PIN preservation, lazy legacy provisioning, and `401`/`403`/`500` error semantics.
+*   `GET /api/v1/admin/students/{id}/slip` (`ROLE_ADMIN`, audited via `AuditLogAspect`): Downloads printable single-student credential slip PDF (`Content-Type: application/pdf`, `Cache-Control: no-store`, attachment filename `slip.pdf`, saved client-side as `${registrationNumber}-slip.pdf`) containing `Candidate Name`, `Registration Number`, `Login PIN: <5-digit PIN>`, and `Registered Subjects`. Preserves existing encrypted PIN across repeat downloads, provisions and persists a fresh 5-digit PIN once when `pinResetRequired = true` or `pin_ciphertext IS NULL`, and returns RFC 7807 `ProblemDetail` on `401`, `403`, `404 Not Found`, or `500`.
 
 ---
 

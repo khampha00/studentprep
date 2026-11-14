@@ -232,7 +232,7 @@ export default function App() {
         </Routes>
       </ErrorBoundary>
       <Toaster
-        position="top-center"
+        position="bottom-right"
         toastOptions={{
           classNames: {
             success: '!bg-[#008751] !text-white !border-[#008751] [&_svg]:text-white',

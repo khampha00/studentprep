@@ -53,6 +53,7 @@ public class AnalyticsController {
                 .map(r -> Map.<String, Object>of(
                         "id", r.getId(),
                         "studentName", r.getStudent().getName(),
+                        "registrationNumber", r.getStudent().getRegistrationNumber(),
                         "totalScore", r.getTotalScore(),
                         "maxScore", r.getMaxScore(),
                         "topicBreakdown", r.getTopicBreakdown(),

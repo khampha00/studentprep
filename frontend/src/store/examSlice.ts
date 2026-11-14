@@ -10,7 +10,7 @@ export interface ExamState {
   contexts: Record<string, string>;
   answers: Record<string, string>;
   flagged: Record<string, boolean>;
-  student: { name: string; registrationNumber: string; examCenter: string } | null;
+  student: { name: string; registrationNumber: string } | null;
   timeLeft: number;
   lastUpdated: number;
   syncStatus: 'idle' | 'syncing' | 'error' | 'synced';

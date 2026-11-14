@@ -7,7 +7,6 @@ public record StudentResponse(
         UUID id,
         String name,
         String registrationNumber,
-        String examCenter,
         boolean pinResetRequired,
         boolean hasActiveSession,
         List<SubjectSummaryResponse> subjects) {

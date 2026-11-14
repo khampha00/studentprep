@@ -184,8 +184,8 @@ Importing past questions (which are notoriously badly formatted) requires a robu
 ## 6. Admin Capabilities & Analytics
 
 ### 6.1 Student Management
-*   **Bulk Generation:** Admins can upload a CSV (Name, State). The `student` module generates an 8-character alphanumeric JAMB Registration Number for each and hashes a default PIN (using Argon2id).
-*   **Printing:** Generate a PDF slip containing the Registration Number, Center, and Exam Time.
+*   **Bulk Generation:** Admins can upload a 5-column CSV (`Name, Subject 1, Subject 2, Subject 3, Subject 4`). The `student` module generates a unique JAMB Registration Number (`^\d{6}[A-Z]{2}$`, i.e., 6 digits followed by 2 uppercase letters such as `123456JF`) and one-time 5-digit PIN for each candidate.
+*   **Printing:** Generate a PDF slip containing the Candidate Name, Registration Number, and Exam Time.
 
 ### 6.2 Analytics
 *   **Granular Grading:** The `analytics` module unpacks the `ExamSubmittedEvent`. It joins the submitted answers with the `ACTIVE` question definitions in Postgres.

@@ -69,13 +69,18 @@ public class SecurityConfig {
                         .permitAll()
                         .requestMatchers("/api/v1/exams/**", "/api/v1/students/**", "/api/v1/student/**")
                         .hasRole("STUDENT")
-                        // Specific ADMIN-only GET endpoints must precede broader SUPERVISOR read matchers.
+                        // Specific ADMIN-only GET and POST endpoints must precede broader SUPERVISOR read matchers.
                         .requestMatchers(
                                 HttpMethod.GET,
                                 "/api/v1/admin/students/export",
+                                "/api/v1/admin/students/credentials/pdf",
                                 "/api/v1/admin/students/*/slip",
                                 "/api/v1/admin/results/*/slip",
                                 "/api/v1/admin/students/*/results/*/slip")
+                        .hasRole("ADMIN")
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/api/v1/admin/students/credentials/pdf")
                         .hasRole("ADMIN")
                         .requestMatchers(
                                 HttpMethod.GET,
@@ -165,6 +170,7 @@ public class SecurityConfig {
                 "Origin",
                 "X-Requested-With",
                 "Cache-Control"));
+        configuration.setExposedHeaders(List.of("Content-Disposition"));
         configuration.setAllowCredentials(true);
         configuration.setMaxAge(3600L);
 

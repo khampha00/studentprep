@@ -117,25 +117,24 @@ public class CsvStudentImporter {
                     parts[i] = unquoteCsvCell(parts[i]);
                 }
 
-                if (parts.length < 6) {
-                    errors.add("Row " + dataRowNumber + ": invalid format (expected 6 columns)");
+                if (parts.length < 5) {
+                    errors.add("Row " + dataRowNumber + ": invalid format (expected 5 columns)");
                     continue;
                 }
 
                 String name = parts[0];
-                String center = parts[1];
                 if (name.isEmpty()) {
                     errors.add("Row " + dataRowNumber + ": student name is required");
                     continue;
                 }
-                if (name.length() > MAX_FIELD_LENGTH || center.length() > MAX_FIELD_LENGTH) {
+                if (name.length() > MAX_FIELD_LENGTH) {
                     errors.add("Row " + dataRowNumber + ": field exceeds maximum length of 255 characters");
                     continue;
                 }
 
                 try {
                     Set<Subject> subjects = new HashSet<>();
-                    for (int i = 2; i < 6; i++) {
+                    for (int i = 1; i < 5; i++) {
                         String subjectName = parts[i];
                         if (subjectName.isEmpty()) {
                             continue;
@@ -148,7 +147,6 @@ public class CsvStudentImporter {
 
                     ProvisionedStudent provisioned = studentManagementService.createStudentWithSubjects(
                             name,
-                            center.isEmpty() ? null : center,
                             subjects);
 
                     credentials.add(new BulkCredentialResponse(
@@ -171,7 +169,7 @@ public class CsvStudentImporter {
     public byte[] exportStudentsCsv() {
         List<Student> allStudents = studentRepository.findAll();
         StringBuilder sb = new StringBuilder();
-        sb.append("Name,Registration Number,Exam Center,Registered Subjects\n");
+        sb.append("Name,Registration Number,Registered Subjects\n");
         for (Student s : allStudents) {
             String subjects = s.getSubjects().stream()
                     .map(Subject::getName)
@@ -179,7 +177,6 @@ public class CsvStudentImporter {
                     .collect(Collectors.joining("; "));
             sb.append(formatCsvField(s.getName())).append(",")
                     .append(formatCsvField(s.getRegistrationNumber())).append(",")
-                    .append(formatCsvField(s.getExamCenter())).append(",")
                     .append(formatCsvField(subjects)).append("\n");
         }
         return sb.toString().getBytes(StandardCharsets.UTF_8);

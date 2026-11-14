@@ -106,7 +106,7 @@ public class ExamPayloadGenerator {
         response.setQuestions(strippedQuestions);
         response.setContexts(contextsMap);
         if (student != null) {
-            response.setStudent(new com.studentprep.exam.dto.StudentProfileDto(student.getName(), student.getRegistrationNumber(), student.getExamCenter()));
+            response.setStudent(new com.studentprep.exam.dto.StudentProfileDto(student.getName(), student.getRegistrationNumber()));
         }
         return response;
     }

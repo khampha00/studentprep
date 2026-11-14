@@ -40,6 +40,8 @@ security:
     secret: ${JWT_SECRET}
     expiration-ms: ${JWT_EXPIRATION_MS:900000}
     refresh-expiration-ms: ${JWT_REFRESH_EXPIRATION_MS:604800000}
+  credential-vault:
+    key: ${CREDENTIAL_ENCRYPTION_KEY:local_dev_credential_vault_key_change_in_prod}
   cookie:
     secure: ${APP_COOKIE_SECURE:${COOKIE_SECURE:true}}
     same-site: ${COOKIE_SAME_SITE:Strict}

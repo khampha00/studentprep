@@ -8,6 +8,7 @@ import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '../../components/ui/card';
 import { AlertTriangle, BookOpen, Clock, ShieldCheck, PlayCircle, LogOut, FileText } from 'lucide-react';
 import { toast } from 'sonner';
+import { buildResultSlipFilename, triggerPdfResponseDownload } from '../../lib/pdf';
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -68,22 +69,21 @@ export default function Dashboard() {
     }
   };
 
-  const handleDownloadResultSlip = async (resultId?: string) => {
+  const handleDownloadResultSlip = async (
+    resultId?: string,
+    studentName?: string,
+    registrationNumber?: string
+  ) => {
     try {
       toast.info('Generating official result slip PDF...');
       const url = resultId 
         ? `/api/v1/students/me/results/${resultId}/slip` 
         : '/api/v1/students/me/results/latest/slip';
-      const response = await axios.get(url, { responseType: 'blob' });
-      const blob = new Blob([response.data], { type: 'application/pdf' });
-      const downloadUrl = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = downloadUrl;
-      link.setAttribute('download', `JAMB-Result-Slip-${resultId || 'latest'}.pdf`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(downloadUrl);
+      const response = await axios.get<Blob>(url, { responseType: 'blob' });
+      triggerPdfResponseDownload(
+        response,
+        buildResultSlipFilename(studentName, registrationNumber, resultId || 'latest')
+      );
       toast.success('Result slip downloaded successfully!');
     } catch (err: any) {
       toast.error('Failed to download result slip. Please try again.');
@@ -263,7 +263,7 @@ export default function Dashboard() {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => handleDownloadResultSlip(result.id)}
+                          onClick={() => handleDownloadResultSlip(result.id, result.studentName, result.registrationNumber)}
                           className="w-full text-xs font-semibold text-[#008751] border-[#008751]/40 hover:bg-emerald-50 flex items-center justify-center gap-1.5 shadow-xs"
                         >
                           <FileText className="w-3.5 h-3.5" />

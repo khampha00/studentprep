@@ -17,7 +17,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.UUID;
@@ -27,41 +29,44 @@ public class StudentManagementService {
 
     private static final Logger log = LoggerFactory.getLogger(StudentManagementService.class);
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
-    private static final String REG_NUM_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    private static final String REG_NUM_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
     private final StudentRepository studentRepository;
     private final SubjectRepository subjectRepository;
     private final ApplicationEventPublisher eventPublisher;
     private final PasswordEncoder passwordEncoder;
     private final StringRedisTemplate redisTemplate;
+    private final StudentPinCryptoService pinCryptoService;
 
     public StudentManagementService(
             StudentRepository studentRepository,
             SubjectRepository subjectRepository,
             ApplicationEventPublisher eventPublisher,
             PasswordEncoder passwordEncoder,
-            StringRedisTemplate redisTemplate) {
+            StringRedisTemplate redisTemplate,
+            StudentPinCryptoService pinCryptoService) {
         this.studentRepository = studentRepository;
         this.subjectRepository = subjectRepository;
         this.eventPublisher = eventPublisher;
         this.passwordEncoder = passwordEncoder;
         this.redisTemplate = redisTemplate;
+        this.pinCryptoService = pinCryptoService;
     }
 
     public record ProvisionedStudent(Student student, String oneTimePin) {
     }
 
-    @Transactional
-    public ProvisionedStudent createStudent(CreateStudentRequest request) {
-        Set<Subject> subjects = resolveSubjects(request.subjectIds());
-        String cleanCenter = request.examCenter() != null && !request.examCenter().trim().isEmpty()
-                ? request.examCenter().trim()
-                : null;
-        return createStudentWithSubjects(request.name().trim(), cleanCenter, subjects);
+    private record IssuedPin(Student student, String rawPin) {
     }
 
     @Transactional
-    public ProvisionedStudent createStudentWithSubjects(String name, String examCenter, Set<Subject> subjects) {
+    public ProvisionedStudent createStudent(CreateStudentRequest request) {
+        Set<Subject> subjects = resolveSubjects(request.subjectIds());
+        return createStudentWithSubjects(request.name().trim(), subjects);
+    }
+
+    @Transactional
+    public ProvisionedStudent createStudentWithSubjects(String name, Set<Subject> subjects) {
         if (name == null || name.trim().isEmpty()) {
             throw new IllegalArgumentException("Student name is required");
         }
@@ -70,9 +75,9 @@ public class StudentManagementService {
 
         Student student = new Student();
         student.setName(name.trim());
-        student.setExamCenter(examCenter != null && !examCenter.trim().isEmpty() ? examCenter.trim() : null);
         student.setRegistrationNumber(regNum);
         student.setPinHash(passwordEncoder.encode(rawPin));
+        student.setPinCiphertext(pinCryptoService.encrypt(rawPin));
         student.setPinResetRequired(false);
         student.setSubjects(subjects != null ? new HashSet<>(subjects) : new HashSet<>());
 
@@ -91,9 +96,6 @@ public class StudentManagementService {
                 .orElseThrow(() -> new NoSuchElementException("Student not found"));
 
         existing.setName(request.name().trim());
-        existing.setExamCenter(request.examCenter() != null && !request.examCenter().trim().isEmpty()
-                ? request.examCenter().trim()
-                : null);
         if (request.subjectIds() != null) {
             existing.setSubjects(resolveSubjects(request.subjectIds()));
         }
@@ -117,11 +119,58 @@ public class StudentManagementService {
     public ResetPinResponse resetPin(UUID id) {
         Student student = studentRepository.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Student not found"));
+        IssuedPin issued = issueFreshPin(student);
+        return new ResetPinResponse(issued.rawPin(), issued.student().getRegistrationNumber());
+    }
 
+    /**
+     * Returns the student's active decrypted PIN without mutation when recoverable ciphertext is
+     * present; otherwise provisions and activates a fresh 5-digit PIN once for legacy/unissued
+     * accounts. Fails fast if stored ciphertext fails authenticated decryption.
+     */
+    @Transactional
+    public String ensureRecoverablePin(Student student) {
+        if (student == null) {
+            throw new IllegalArgumentException("Student must not be null");
+        }
+        return resolveOrProvisionPin(student);
+    }
+
+    /**
+     * Batch variant of {@link #ensureRecoverablePin(Student)} preserving roster order and rolling
+     * back atomically if any recoverable ciphertext fails decryption.
+     */
+    @Transactional
+    public Map<UUID, String> ensureRecoverablePins(List<Student> students) {
+        if (students == null || students.isEmpty()) {
+            return Map.of();
+        }
+        Map<UUID, String> pinsByStudentId = new LinkedHashMap<>(students.size());
+        for (Student student : students) {
+            if (student == null) {
+                continue;
+            }
+            pinsByStudentId.put(student.getId(), resolveOrProvisionPin(student));
+        }
+        return pinsByStudentId;
+    }
+
+    private String resolveOrProvisionPin(Student student) {
+        if (!student.isPinResetRequired()
+                && student.getPinCiphertext() != null
+                && !student.getPinCiphertext().isBlank()) {
+            return pinCryptoService.decrypt(student.getPinCiphertext());
+        }
+        return issueFreshPin(student).rawPin();
+    }
+
+    private IssuedPin issueFreshPin(Student student) {
         String newPin = generatePin();
         student.setPinHash(passwordEncoder.encode(newPin));
+        student.setPinCiphertext(pinCryptoService.encrypt(newPin));
         student.setPinResetRequired(false);
-        Student saved = studentRepository.save(student);
+        Student persisted = studentRepository.save(student);
+        Student saved = persisted != null ? persisted : student;
 
         evictStudentRedisKeys(saved.getRegistrationNumber());
         eventPublisher.publishEvent(new StudentPinResetEvent(
@@ -129,7 +178,7 @@ public class StudentManagementService {
                 saved.getRegistrationNumber(),
                 saved.getPinHash(),
                 false));
-        return new ResetPinResponse(newPin, saved.getRegistrationNumber());
+        return new IssuedPin(saved, newPin);
     }
 
     private Set<Subject> resolveSubjects(Set<UUID> subjectIds) {
@@ -170,9 +219,10 @@ public class StudentManagementService {
     }
 
     private String generateRegistrationNumber() {
-        StringBuilder sb = new StringBuilder("JAMB-2026-");
-        for (int i = 0; i < 6; i++) {
-            sb.append(REG_NUM_CHARS.charAt(SECURE_RANDOM.nextInt(REG_NUM_CHARS.length())));
+        StringBuilder sb = new StringBuilder(8);
+        sb.append(String.format("%06d", SECURE_RANDOM.nextInt(1_000_000)));
+        for (int i = 0; i < 2; i++) {
+            sb.append(REG_NUM_LETTERS.charAt(SECURE_RANDOM.nextInt(REG_NUM_LETTERS.length())));
         }
         return sb.toString();
     }

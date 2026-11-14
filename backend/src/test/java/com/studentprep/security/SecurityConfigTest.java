@@ -130,6 +130,14 @@ class SecurityConfigTest {
             assertUnauthorizedProblem(mockMvc, get("/api/v1/exams/active/session"), "/api/v1/exams/active/session");
             assertUnauthorizedProblem(mockMvc, get("/api/v1/students/me/results"), "/api/v1/students/me/results");
             assertUnauthorizedProblem(mockMvc, get("/api/v1/admin/students"), "/api/v1/admin/students");
+            assertUnauthorizedProblem(
+                    mockMvc,
+                    get("/api/v1/admin/students/credentials/pdf"),
+                    "/api/v1/admin/students/credentials/pdf");
+            assertUnauthorizedProblem(
+                    mockMvc,
+                    post("/api/v1/admin/students/credentials/pdf"),
+                    "/api/v1/admin/students/credentials/pdf");
         });
     }
 
@@ -148,6 +156,16 @@ class SecurityConfigTest {
                     .andExpect(status().isOk());
 
             assertForbiddenProblem(mockMvc, get("/api/v1/admin/students"), "token-student", "/api/v1/admin/students");
+            assertForbiddenProblem(
+                    mockMvc,
+                    get("/api/v1/admin/students/credentials/pdf"),
+                    "token-student",
+                    "/api/v1/admin/students/credentials/pdf");
+            assertForbiddenProblem(
+                    mockMvc,
+                    post("/api/v1/admin/students/credentials/pdf"),
+                    "token-student",
+                    "/api/v1/admin/students/credentials/pdf");
             assertForbiddenProblem(
                     mockMvc,
                     get("/api/v1/admin/analytics/dashboard"),
@@ -190,6 +208,16 @@ class SecurityConfigTest {
                     get("/api/v1/admin/students/export"),
                     "token-supervisor",
                     "/api/v1/admin/students/export");
+            assertForbiddenProblem(
+                    mockMvc,
+                    get("/api/v1/admin/students/credentials/pdf"),
+                    "token-supervisor",
+                    "/api/v1/admin/students/credentials/pdf");
+            assertForbiddenProblem(
+                    mockMvc,
+                    post("/api/v1/admin/students/credentials/pdf"),
+                    "token-supervisor",
+                    "/api/v1/admin/students/credentials/pdf");
             assertForbiddenProblem(
                     mockMvc,
                     get("/api/v1/admin/students/stu-1/slip"),
@@ -266,6 +294,12 @@ class SecurityConfigTest {
             mockMvc.perform(get("/api/v1/subjects").header(HttpHeaders.AUTHORIZATION, "Bearer token-admin"))
                     .andExpect(status().isOk());
             mockMvc.perform(get("/api/v1/admin/students/export")
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer token-admin"))
+                    .andExpect(status().isOk());
+            mockMvc.perform(get("/api/v1/admin/students/credentials/pdf")
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer token-admin"))
+                    .andExpect(status().isOk());
+            mockMvc.perform(post("/api/v1/admin/students/credentials/pdf")
                             .header(HttpHeaders.AUTHORIZATION, "Bearer token-admin"))
                     .andExpect(status().isOk());
             mockMvc.perform(get("/api/v1/admin/students/stu-1/slip")
@@ -380,6 +414,7 @@ class SecurityConfigTest {
             "/api/v1/auth/refresh",
             "/api/v1/auth/logout",
             "/api/v1/admin/students",
+            "/api/v1/admin/students/credentials/pdf",
             "/api/v1/admin/students/{id}/reset-pin",
             "/api/v1/admin/students/{id}/unlock-session",
             "/api/v1/admin/questions/drafts/bulk-approve",
@@ -413,6 +448,7 @@ class SecurityConfigTest {
             "/api/v1/admin/questions",
             "/api/v1/admin/students",
             "/api/v1/admin/students/export",
+            "/api/v1/admin/students/credentials/pdf",
             "/api/v1/admin/students/{id}",
             "/api/v1/admin/students/{id}/slip",
             "/api/v1/admin/students/{id}/results",

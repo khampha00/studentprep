@@ -351,7 +351,6 @@ class AuthSessionLifecycleIntegrationTest {
 
         Student student = new Student();
         student.setName("Lifecycle Candidate");
-        student.setExamCenter("Center L");
         student.setRegistrationNumber(regNumber);
         student.setPinHash(hash);
         student.setPinResetRequired(false);

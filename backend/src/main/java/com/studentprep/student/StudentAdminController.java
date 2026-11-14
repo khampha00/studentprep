@@ -4,6 +4,7 @@ import com.studentprep.common.ApiResponse;
 import com.studentprep.common.PagedResponse;
 import com.studentprep.common.SessionRedisKeys;
 import com.studentprep.student.StudentManagementService.ProvisionedStudent;
+import com.studentprep.student.dto.BatchCredentialPdfRequest;
 import com.studentprep.student.dto.BulkImportResponse;
 import com.studentprep.student.dto.CreateStudentRequest;
 import com.studentprep.student.dto.CreatedStudentResponse;
@@ -18,6 +19,7 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -77,7 +79,6 @@ public class StudentAdminController {
                 student.getId(),
                 student.getName(),
                 student.getRegistrationNumber(),
-                student.getExamCenter() != null ? student.getExamCenter() : "",
                 toSubjectSummaries(student),
                 provisioned.oneTimePin());
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.of(response));
@@ -126,10 +127,22 @@ public class StudentAdminController {
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<byte[]> getRegistrationSlip(@PathVariable UUID id) {
         byte[] pdfBytes = registrationSlipGenerator.getRegistrationSlipPdf(id);
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_PDF);
-        headers.setContentDispositionFormData("attachment", "slip.pdf");
-        return ResponseEntity.ok().headers(headers).body(pdfBytes);
+        return pdfAttachmentResponse(pdfBytes, "slip.pdf");
+    }
+
+    @GetMapping(value = "/credentials/pdf", produces = MediaType.APPLICATION_PDF_VALUE)
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<byte[]> getBulkCredentialsPdf() {
+        byte[] pdfBytes = registrationSlipGenerator.getBulkCredentialsPdf();
+        return pdfAttachmentResponse(pdfBytes, "student_credentials_roster.pdf");
+    }
+
+    @PostMapping(value = "/credentials/pdf", produces = MediaType.APPLICATION_PDF_VALUE)
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<byte[]> getBatchCredentialsPdf(
+            @Valid @RequestBody BatchCredentialPdfRequest request) {
+        byte[] pdfBytes = registrationSlipGenerator.getBatchCredentialsPdf(request.registrationNumbers());
+        return pdfAttachmentResponse(pdfBytes, "batch_credentials_roster.pdf");
     }
 
     @GetMapping(value = "/export", produces = "text/csv")
@@ -168,12 +181,19 @@ public class StudentAdminController {
         return ResponseEntity.ok(pagedResponse);
     }
 
+    private ResponseEntity<byte[]> pdfAttachmentResponse(byte[] pdfBytes, String filename) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_PDF);
+        headers.setContentDispositionFormData("attachment", filename);
+        headers.setCacheControl(CacheControl.noStore());
+        return ResponseEntity.ok().headers(headers).body(pdfBytes);
+    }
+
     private StudentResponse toStudentResponse(Student student, boolean activeSession) {
         return new StudentResponse(
                 student.getId(),
                 student.getName(),
                 student.getRegistrationNumber(),
-                student.getExamCenter() != null ? student.getExamCenter() : "",
                 student.isPinResetRequired(),
                 activeSession,
                 toSubjectSummaries(student));

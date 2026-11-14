@@ -23,6 +23,7 @@ import {
 } from './ui/alert-dialog';
 import OneTimePinSlip from './OneTimePinSlip';
 import { extractProblemMessage, extractProblemMessageAsync, isAdminRole } from '../lib/auth';
+import { buildResultSlipFilename, triggerPdfResponseDownload } from '../lib/pdf';
 import type {
   ResetPinResponse,
   StudentExamResult,
@@ -61,11 +62,11 @@ export default function StudentDetailModal({
 
   const [deleting, setDeleting] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [downloadingCredentialPdf, setDownloadingCredentialPdf] = useState(false);
 
   const [isEditing, setIsEditing] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
   const [editName, setEditName] = useState('');
-  const [editCenter, setEditCenter] = useState('');
   const [editSubjectIds, setEditSubjectIds] = useState<string[]>([]);
 
   useEffect(() => {
@@ -81,7 +82,6 @@ export default function StudentDetailModal({
         setStudent(loadedStudent);
         setResults((resultsRes.data?.data as StudentExamResult[]) || []);
         setEditName(loadedStudent?.name || '');
-        setEditCenter(loadedStudent?.examCenter || '');
         setEditSubjectIds((loadedStudent?.subjects || []).map((s) => s.id));
       } catch (err: unknown) {
         if (active) {
@@ -99,28 +99,52 @@ export default function StudentDetailModal({
     };
   }, [studentId]);
 
-  const handleDownloadResultSlip = async (resultId: string) => {
+  const downloadPdfBlob = async (
+    url: string,
+    filename: string,
+    successMessage: string,
+    fallbackError: string,
+    preferServerFilename = true
+  ): Promise<boolean> => {
     try {
-      toast.info('Downloading official result slip PDF...');
-      const response = await axios.get(`/api/v1/admin/results/${resultId}/slip`, {
-        responseType: 'blob',
-      });
-      const blob = new Blob([response.data], { type: 'application/pdf' });
-      const downloadUrl = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = downloadUrl;
-      link.setAttribute(
-        'download',
-        `Result-${student?.registrationNumber || 'Student'}-${resultId.substring(0, 8)}.pdf`
-      );
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(downloadUrl);
-      toast.success('Result slip downloaded successfully!');
+      const response = await axios.get<Blob>(url, { responseType: 'blob' });
+      triggerPdfResponseDownload(response, filename, preferServerFilename);
+      toast.success(successMessage);
+      return true;
     } catch (err: unknown) {
-      const msg = await extractProblemMessageAsync(err, 'Failed to download result slip.');
+      const msg = await extractProblemMessageAsync(err, fallbackError);
       toast.error(msg);
+      return false;
+    }
+  };
+
+  const handleDownloadResultSlip = async (resultId: string) => {
+    toast.info('Downloading official result slip PDF...');
+    await downloadPdfBlob(
+      `/api/v1/admin/results/${resultId}/slip`,
+      buildResultSlipFilename(student?.name, student?.registrationNumber, resultId),
+      'Result slip downloaded successfully!',
+      'Failed to download result slip.'
+    );
+  };
+
+  const handleDownloadCredentialPdf = async () => {
+    if (!student) return;
+    setDownloadingCredentialPdf(true);
+    try {
+      const ok = await downloadPdfBlob(
+        `/api/v1/admin/students/${student.id}/slip`,
+        `${student.registrationNumber}-slip.pdf`,
+        'Credential PDF downloaded successfully!',
+        'Failed to download credential PDF.',
+        false
+      );
+      if (ok && student.pinResetRequired) {
+        setStudent((prev) => (prev ? { ...prev, pinResetRequired: false } : prev));
+        onUpdated?.();
+      }
+    } finally {
+      setDownloadingCredentialPdf(false);
     }
   };
 
@@ -193,7 +217,6 @@ export default function StudentDetailModal({
     try {
       const res = await axios.put(`/api/v1/admin/students/${studentId}`, {
         name: editName.trim(),
-        examCenter: editCenter.trim(),
         subjectIds: editSubjectIds,
       });
       const updated = res.data?.data as StudentSummary;
@@ -258,7 +281,6 @@ export default function StudentDetailModal({
                 {
                   name: student.name,
                   registrationNumber: oneTimePinSlip.registrationNumber || student.registrationNumber,
-                  examCenter: student.examCenter,
                   subjects: student.subjects?.map((s) => s.name),
                   oneTimePin: oneTimePinSlip.newPin,
                 },
@@ -293,33 +315,19 @@ export default function StudentDetailModal({
               <AccordionContent className="pt-2 pb-4 space-y-4">
                 {isEditing && isAdmin ? (
                   <form onSubmit={handleSaveEdit} className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="flex flex-col gap-1.5">
-                        <Label htmlFor="edit-student-name" className="text-slate-900">
-                          Candidate Name{' '}
-                          <span className="-ml-2 text-[18px] font-bold text-destructive">*</span>
-                        </Label>
-                        <input
-                          id="edit-student-name"
-                          type="text"
-                          required
-                          value={editName}
-                          onChange={(e) => setEditName(e.target.value)}
-                          className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-md text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#008751]"
-                        />
-                      </div>
-                      <div className="flex flex-col gap-1.5">
-                        <Label htmlFor="edit-student-center" className="text-slate-900">
-                          Exam Center
-                        </Label>
-                        <input
-                          id="edit-student-center"
-                          type="text"
-                          value={editCenter}
-                          onChange={(e) => setEditCenter(e.target.value)}
-                          className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-md text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#008751]"
-                        />
-                      </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="edit-student-name" className="text-slate-900">
+                        Candidate Name{' '}
+                        <span className="-ml-2 text-[18px] font-bold text-destructive">*</span>
+                      </Label>
+                      <input
+                        id="edit-student-name"
+                        type="text"
+                        required
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-md text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#008751]"
+                      />
                     </div>
 
                     {availableSubjects.length > 0 && (
@@ -367,16 +375,10 @@ export default function StudentDetailModal({
                 ) : (
                   <>
                     <div className="grid grid-cols-2 gap-y-2 gap-x-6 text-sm">
-                      <div>
+                      <div className="col-span-2">
                         <div className="text-xs font-semibold text-slate-500">Reg Number</div>
                         <div className="font-mono font-bold text-slate-900">
                           {student.registrationNumber}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-xs font-semibold text-slate-500">Exam Center</div>
-                        <div className="font-medium text-slate-900">
-                          {student.examCenter || 'N/A'}
                         </div>
                       </div>
                       <div>
@@ -392,7 +394,7 @@ export default function StudentDetailModal({
                           ) : (
                             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-emerald-50 text-emerald-900 border border-emerald-200 rounded text-xs font-semibold">
                               <ShieldCheck className="w-3 h-3 text-[#008751]" />
-                              Hashed (Never Readable)
+                              Active (Credential PDF Ready)
                             </span>
                           )}
                         </div>
@@ -426,6 +428,20 @@ export default function StudentDetailModal({
                         >
                           <Edit2 className="w-3.5 h-3.5 mr-1.5" />
                           Edit Profile
+                        </Button>
+
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleDownloadCredentialPdf}
+                          disabled={downloadingCredentialPdf}
+                          className="border-[#008751] text-[#008751] bg-zinc-50 hover:bg-emerald-50"
+                        >
+                          <FileText className="w-3.5 h-3.5 mr-1.5" />
+                          {downloadingCredentialPdf
+                            ? 'Downloading PDF...'
+                            : 'Download Credential PDF'}
                         </Button>
 
                         <Button
