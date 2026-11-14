@@ -40,22 +40,29 @@ All errors (4xx, 5xx) MUST conform to RFC 7807 Problem Details for HTTP APIs. Sp
 }
 ```
 
-### 1.3 Authentication
-All endpoints (except `/api/v1/auth/login`) require a valid JWT passed in the Authorization header:
+### 1.3 Authentication & Authorization
+All endpoints (except `/api/v1/auth/login`, `/api/v1/auth/refresh`, `/api/v1/auth/logout`) require a valid **access** JWT (`token_type: "access"`) passed in the Authorization header:
 `Authorization: Bearer <access_token>`
+
+*   **Expired or Missing Credentials:** Protected endpoints MUST return `401 Unauthorized` (RFC 7807 `ProblemDetail`) — never `403 Forbidden` — so clients automatically invoke `/api/v1/auth/refresh`.
+*   **Evicted Session:** If the presented `jti` no longer matches Redis `session:<CANONICAL_ID>`, protected endpoints return `401 Unauthorized` with `detail: "Session active on another device"` and `code: "SESSION_EVICTED"`.
+*   **Role Separation:**
+    *   `ROLE_STUDENT`: Exam execution (`/api/v1/exams/**`) and own results (`/api/v1/students/me/**`, `/api/v1/student/results`).
+    *   `ROLE_SUPERVISOR`: Read-only monitoring & directory views (`GET /api/v1/admin/analytics/**`, `GET /api/v1/admin/questions`, `GET /api/v1/admin/subjects`, `GET /api/v1/admin/students`, `GET /api/v1/admin/students/{id}`, `GET /api/v1/admin/students/{id}/results`). Mutating admin routes, `/export`, and `/*/slip` are forbidden (`403`).
+    *   `ROLE_ADMIN`: Full administrative CRUD, PIN reset, workstation unlock, CSV exports, ingestion, and HITL question approval.
 
 ---
 
 ## 2. Authentication Module (`security` boundary)
 
 ### `POST /api/v1/auth/login`
-Authenticates a user (Student or Admin) and issues an Access Token.
+Authenticates a user (Student or Admin) and issues an Access Token and `refreshToken` cookie. Subject to brute-force rate limiting (`429 Too Many Requests` with `Retry-After` after repeated failed attempts per identifier or IP burst limits).
 
 **Request Body:**
 ```json
 {
   "identifier": "JAMB-2026-X7Y8Z9",
-  "pin": "12345"
+  "pin": "49281"
 }
 ```
 
@@ -69,14 +76,48 @@ Authenticates a user (Student or Admin) and issues an Access Token.
   }
 }
 ```
-*(Note: The `refresh_token` is omitted from the payload as it must be set as an HttpOnly, Secure, SameSite=Strict cookie).*
+*(Note: The `refreshToken` JWT (`token_type: "refresh"`) is omitted from the JSON body and set as an `HttpOnly`, environment-configured `Secure`, `SameSite=Strict` (configurable) cookie scoped to `Path=/api/v1/auth`.)*
+
+**Failure & Policy Responses:**
+*   `401 Unauthorized`: Invalid identifier/PIN or deleted account.
+*   `403 Forbidden`: Candidate flagged for malpractice OR legacy PIN requires admin reset (`code: "PIN_RESET_REQUIRED"`).
+*   `409 Conflict`: Active exam (`IN_PROGRESS`) or active workstation session bound elsewhere (`isSameDevice == false` and no valid admin unlock clearance). Same-device reconnections presenting a matching `refreshToken` cookie resume seamlessly and rotate `jti`.
+
+### `POST /api/v1/auth/refresh`
+Exchanges a valid `refreshToken` cookie (`token_type: "refresh"`) matching Redis `session:<CANONICAL_ID>` `jti` for a fresh 15-minute access token (`token_type: "access"`). Subject to IP rate limiting (`429`).
+
+**Response (200 OK):** `{ "data": { "accessToken": "eyJhbG...", "expiresIn": 900, "role": "ROLE_STUDENT" } }`
+
+**Failure Responses:** `401 Unauthorized` (missing/invalid/wrong `token_type`/evicted `jti`), `403 Forbidden` (malpractice flagged).
+
+### `POST /api/v1/auth/logout`
+Verifies caller `jti` ownership (via `Authorization` header allowing expired verified JWT, or `refreshToken` cookie) before deleting Redis `session:<CANONICAL_ID>`. Clears the client `refreshToken` cookie unconditionally (`Max-Age=0`). An evicted or unauthenticated caller never terminates another active workstation's session.
+
+**Response (200 OK):** Empty body + expired `refreshToken` cookie header.
+
+---
+
+## 2.5 Student Identity & Onboarding (`student` boundary — Admin Facing)
+
+*   `POST /api/v1/admin/students` (`ROLE_ADMIN`): Creates candidate, generates one-time random 5-digit PIN, stores strictly hashed (`pin_hash`), returns `oneTimePin` **once** in response JSON.
+*   `POST /api/v1/admin/students/bulk` (`ROLE_ADMIN`): Imports CSV cohort, returns `{ "data": { "created", "errors", "credentials": [{ "name", "registrationNumber", "oneTimePin" }] } }` **once**.
+*   `POST /api/v1/admin/students/{id}/reset-pin` (`ROLE_ADMIN`): Generates new one-time PIN, updates `pin_hash`, clears `pinResetRequired`, revokes active Redis session/unlock keys, returns `{ "data": { "newPin", "registrationNumber" } }` **once**.
+*   `POST /api/v1/admin/students/{id}/unlock-session` (`ROLE_ADMIN`): Evicts current workstation `session:<CANONICAL_ID>` and writes a 15-minute single-use `exam_unlock:<CANONICAL_ID>` permit (audited in `audit_logs`) so an interrupted candidate may resume on a replacement workstation.
+*   `GET /api/v1/admin/students` & `GET /api/v1/admin/students/{id}`: Returns student metadata (`id`, `name`, `registrationNumber`, `examCenter`, `pinResetRequired`, `hasActiveSession`, `subjects`) with **no PIN or hash fields**.
+*   `GET /api/v1/admin/students/export` (`ROLE_ADMIN`): Downloads CSV roster (`Name,Registration Number,Exam Center,Registered Subjects`) with spreadsheet formula sanitization and **zero PIN columns**.
+*   `GET /api/v1/admin/students/{id}/slip` (`ROLE_ADMIN`): Downloads registration slip PDF with masked/redacted PIN status notice.
 
 ---
 
 ## 3. Ingestion & Question Bank (Admin Facing)
 
-### `POST /api/v1/admin/ingestion/pdf`
-Uploads a past-questions PDF for layout analysis, OCR, S3 uploading, and LLM structuring.
+### `POST /api/v1/admin/ingestion/assets` (`ROLE_ADMIN`)
+Uploads diagram/media assets for questions. Strictly restricted to validated raster images (`image/png`, `image/jpeg`, `image/gif`, `image/webp`) verified by magic bytes (`<= 5 MB`); active content such as SVG, HTML, or scripts is rejected with RFC 7807 `400 Bad Request` / `415 Unsupported Media Type`.
+
+**Response (200 OK):** `{ "data": { "url": "<public-base-url>/<bucket>/diagrams/<uuid>.<ext>" } }`
+
+### `POST /api/v1/admin/ingestion/pdf` (`ROLE_ADMIN`)
+Uploads a past-questions PDF (`<= 10 MB`, `application/pdf`, `%PDF-` magic header) for layout analysis via authenticated `docling-parser` (`X-API-Key`), S3 uploading, and LLM structuring. Upstream errors stored in `ingestion_jobs` are stripped of API keys or query secrets.
 
 **Content-Type:** `multipart/form-data`
 *   `file`: The PDF file binary.

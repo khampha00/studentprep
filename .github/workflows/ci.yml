@@ -2,52 +2,141 @@ name: StudentPrep CI/CD Pipeline
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "deployment" ]
   pull_request:
     branches: [ "main" ]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   backend-modulith-tests:
-    name: Backend Modulith & Unit Tests
+    name: Backend Modulith & Integration Tests
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./backend
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+
+      - name: Setup Environment Variables
+        run: tr -d '\r' < .env.example > .env
+
+      - name: Start Postgres & Redis
+        run: docker compose up -d postgres redis
+
+      - name: Wait for Postgres & Redis
+        run: |
+          echo "Waiting for PostgreSQL..."
+          timeout 60 bash -c 'while ! docker compose exec -T postgres pg_isready -U postgres -d studentprep; do sleep 2; done'
+          echo "Waiting for Redis..."
+          timeout 60 bash -c 'while ! docker compose exec -T redis redis-cli -a studentprep_redis ping | grep -q PONG; do sleep 2; done'
 
       - name: Setup Java 17
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v6
         with:
           java-version: '17'
           distribution: 'temurin'
           cache: 'maven'
 
-      - name: Run Maven Verify (Modulith Tests)
-        run: mvn clean verify
+      - name: Run Maven Verify (Unit, Modulith & Integration Tests)
+        working-directory: ./backend
+        run: mvn -B clean verify
 
-  frontend-e2e-tests:
-    name: Frontend Playwright E2E Tests
+      - name: Dump Infrastructure Logs on Failure
+        if: failure()
+        run: docker compose logs --tail=50 postgres redis
+
+  docling-parser-tests:
+    name: Docling Sidecar Python Tests
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./services/docling-parser
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: './services/docling-parser/requirements.txt'
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest httpx
+
+      - name: Run Docling Sidecar Tests
+        run: pytest -v
+
+  frontend-lint-build:
+    name: Frontend Lint & Production Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: './frontend/package-lock.json'
+
+      - name: Install Frontend Dependencies
+        run: npm ci
+
+      - name: Run Lint Checks
+        run: |
+          npm run lint
+          npx oxlint tests/auth-hardening.spec.ts playwright.config.ts
+
+      - name: Build Production Bundle
+        run: npm run build
+
+  frontend-e2e-tests:
+    name: Frontend Unmocked Playwright E2E Tests
+    runs-on: ubuntu-latest
+    env:
+      ADMIN_BOOTSTRAP_SECRET: admin123
+      SECURITY_BOOTSTRAP_SEED_NON_PROD_FIXTURES: 'true'
+      DOCLING_API_KEY: ci-docling-test-key
+      COOKIE_SECURE: 'false'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
 
       - name: Setup Environment Variables
-        run: cp .env.example .env
+        run: |
+          tr -d '\r' < .env.example | grep -vE '^(ADMIN_BOOTSTRAP_SECRET|DOCLING_API_KEY|COOKIE_SECURE|SECURITY_BOOTSTRAP_SEED_NON_PROD_FIXTURES)=' > .env
+          cat << EOF >> .env
+          ADMIN_BOOTSTRAP_SECRET=${ADMIN_BOOTSTRAP_SECRET}
+          DOCLING_API_KEY=${DOCLING_API_KEY}
+          COOKIE_SECURE=${COOKIE_SECURE}
+          SECURITY_BOOTSTRAP_SEED_NON_PROD_FIXTURES=${SECURITY_BOOTSTRAP_SEED_NON_PROD_FIXTURES}
+          EOF
 
-      - name: Start Infrastructure (Docker Compose)
-        run: docker compose up -d postgres redis minio
+      - name: Start Infrastructure (Postgres, Redis, MinIO, Docling)
+        run: docker compose up -d --build postgres redis minio docling-parser
 
       - name: Wait for Infrastructure
         run: |
-          echo "Waiting for PostgreSQL to be ready..."
-          timeout 60 bash -c 'while ! docker compose exec -T postgres pg_isready -U postgres; do sleep 2; done'
-          echo "PostgreSQL is ready!"
+          echo "Waiting for PostgreSQL..."
+          timeout 60 bash -c 'while ! docker compose exec -T postgres pg_isready -U postgres -d studentprep; do sleep 2; done'
+          echo "Waiting for Redis..."
+          timeout 60 bash -c 'while ! docker compose exec -T redis redis-cli -a studentprep_redis ping | grep -q PONG; do sleep 2; done'
+          echo "Waiting for MinIO..."
+          timeout 60 bash -c 'while ! docker compose exec -T minio mc ready local; do sleep 2; done'
+          echo "Waiting for Docling parser..."
+          timeout 60 bash -c 'while ! curl -sf http://localhost:8000/health; do sleep 2; done'
 
       - name: Setup Java 17
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v6
         with:
           java-version: '17'
           distribution: 'temurin'
@@ -56,17 +145,25 @@ jobs:
       - name: Start Spring Boot Backend
         working-directory: ./backend
         run: |
-          nohup mvn spring-boot:run > ../spring-boot.log 2>&1 &
+          nohup mvn -B spring-boot:run > ../spring-boot.log 2>&1 &
           echo $! > ../spring-boot.pid
-        
-      - name: Wait for Backend
-        run: |
-          echo "Waiting for Spring Boot to start on port 8080..."
-          timeout 180 bash -c 'while ! nc -z localhost 8080; do sleep 3; done'
-          echo "Backend is up!"
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Wait for Backend Startup
+        run: |
+          echo "Waiting for Spring Boot backend on port 8080..."
+          timeout 240 bash -c '
+            while ! grep -q "Started StudentPrepApplication" spring-boot.log 2>/dev/null; do
+              if ! kill -0 $(cat spring-boot.pid) 2>/dev/null; then
+                echo "Backend process exited unexpectedly!"
+                exit 1
+              fi
+              sleep 2
+            done
+          '
+          echo "Backend started cleanly!"
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: 'npm'
@@ -76,15 +173,22 @@ jobs:
         working-directory: ./frontend
         run: npm ci
 
-      - name: Install Playwright Browsers
+      - name: Install Playwright Browsers (Chromium & WebKit)
         working-directory: ./frontend
-        run: npx playwright install --with-deps
+        run: npx playwright install --with-deps chromium webkit
 
-      - name: Run Playwright Tests (Offline Resilience & Tab Switching)
+      - name: Run Unmocked Security & Auth E2E Suite
         working-directory: ./frontend
-        run: npx playwright test
+        run: npx playwright test tests/auth-hardening.spec.ts --reporter=list
 
-      - name: Dump Spring Boot Logs on Failure
+      - name: Stop Backend Process
+        if: always()
+        run: |
+          if [ -f spring-boot.pid ]; then
+            kill $(cat spring-boot.pid) 2>/dev/null || true
+          fi
+
+      - name: Dump Logs on Failure
         if: failure()
         run: |
           echo "=== Spring Boot Logs ==="

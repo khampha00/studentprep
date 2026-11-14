@@ -1,14 +1,29 @@
 package com.studentprep.student;
 
+import com.studentprep.questionbank.Subject;
+import com.studentprep.questionbank.SubjectRepository;
+import com.studentprep.security.PinHashingPasswordEncoder;
+import com.studentprep.student.dto.BulkImportResponse;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import com.studentprep.questionbank.SubjectRepository;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
-import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class CsvStudentImporterTest {
@@ -20,18 +35,116 @@ class CsvStudentImporterTest {
     private SubjectRepository subjectRepository;
 
     @Mock
-    private UserRepository userRepository;
+    private ApplicationEventPublisher eventPublisher;
 
-    @InjectMocks
+    @Mock
+    private StringRedisTemplate redisTemplate;
+
+    private PasswordEncoder passwordEncoder;
     private CsvStudentImporter csvStudentImporter;
 
-    @Test
-    void testExportStudentsCsv() {
-        when(studentRepository.findAll()).thenReturn(java.util.Collections.emptyList());
+    @BeforeEach
+    void setUp() {
+        passwordEncoder = new PinHashingPasswordEncoder();
+        StudentManagementService studentManagementService = new StudentManagementService(
+                studentRepository,
+                subjectRepository,
+                eventPublisher,
+                passwordEncoder,
+                redisTemplate);
+        csvStudentImporter = new CsvStudentImporter(
+                studentRepository,
+                subjectRepository,
+                studentManagementService);
+    }
 
-        byte[] result = csvStudentImporter.exportStudentsCsv();
-        
-        assertNotNull(result);
-        assertTrue(new String(result).contains("Name,Registration Number"));
+    @Test
+    void processBulkCsv_GeneratesOneTimePinsHashesCredentialsHandlesTrailingEmptyCellsAndRecordsErrors() {
+        Subject biology = new Subject("BIOLOGY");
+        biology.setId(UUID.randomUUID());
+        Subject mathematics = new Subject("MATHEMATICS");
+        mathematics.setId(UUID.randomUUID());
+
+        when(subjectRepository.findByName("Biology")).thenReturn(Optional.of(biology));
+        when(subjectRepository.findByName("Mathematics")).thenReturn(Optional.of(mathematics));
+        when(studentRepository.existsByRegistrationNumberIgnoreCase(anyString())).thenReturn(false);
+        when(studentRepository.save(any(Student.class))).thenAnswer(invocation -> {
+            Student candidate = invocation.getArgument(0);
+            candidate.setId(UUID.randomUUID());
+            assertThat(candidate.getPinHash()).startsWith("$argon2id$");
+            assertThat(candidate.isPinResetRequired()).isFalse();
+            return candidate;
+        });
+
+        String csvContent = String.join("\n",
+                "Name,Exam Center,Subject 1,Subject 2,Subject 3,Subject 4",
+                "Ada Lovelace,Center 1,Biology,,,",
+                ",Center 2,Biology,Mathematics,,",
+                "BrokenRowOnlyOneColumn",
+                "Grace Hopper,Center 3,Mathematics,Biology,,");
+        MockMultipartFile file = new MockMultipartFile(
+                "csvFile",
+                "students.csv",
+                "text/csv",
+                csvContent.getBytes(StandardCharsets.UTF_8));
+
+        BulkImportResponse response = csvStudentImporter.processBulkCsv(file);
+
+        assertThat(response.created()).isEqualTo(2);
+        assertThat(response.errors()).hasSize(2);
+        assertThat(response.errors().get(0)).contains("Row 2");
+        assertThat(response.errors().get(1)).contains("Row 3");
+        assertThat(response.credentials()).hasSize(2);
+        assertThat(response.credentials().get(0).name()).isEqualTo("Ada Lovelace");
+        assertThat(response.credentials().get(0).registrationNumber()).startsWith("JAMB-2026-");
+        assertThat(response.credentials().get(0).oneTimePin()).matches("^\\d{5}$");
+        assertThat(response.credentials().get(1).name()).isEqualTo("Grace Hopper");
+        assertThat(response.credentials().get(1).oneTimePin()).matches("^\\d{5}$");
+    }
+
+    @Test
+    void exportStudentsCsv_OmitsLoginPinColumnAndNeutralizesSpreadsheetFormulaInjection() {
+        Subject dangerousSubject = new Subject("+HYPERLINK(\"http://evil\",\"bad\")");
+        dangerousSubject.setId(UUID.randomUUID());
+
+        Student formulaStudent = new Student();
+        formulaStudent.setId(UUID.randomUUID());
+        formulaStudent.setName("=CMD|'/C calc'!A0");
+        formulaStudent.setRegistrationNumber("JAMB-2026-ABC123");
+        formulaStudent.setExamCenter("@SUM(1+1)");
+        formulaStudent.setPinHash("$argon2id$v=19$m=16384,t=2,p=1$salt$supersecrethash");
+        formulaStudent.setSubjects(Set.of(dangerousSubject));
+
+        Student tabStudent = new Student();
+        tabStudent.setId(UUID.randomUUID());
+        tabStudent.setName("-2+3");
+        tabStudent.setRegistrationNumber("JAMB-2026-XYZ987");
+        tabStudent.setExamCenter("\tmalicious");
+        tabStudent.setPinHash("$argon2id$v=19$m=16384,t=2,p=1$salt$anotherhash");
+
+        Student crStudent = new Student();
+        crStudent.setId(UUID.randomUUID());
+        crStudent.setName("\rmalicious");
+        crStudent.setRegistrationNumber("JAMB-2026-CR0001");
+        crStudent.setExamCenter("Main Hall");
+        crStudent.setPinHash("!LEGACY_INVALIDATED!");
+
+        when(studentRepository.findAll()).thenReturn(List.of(formulaStudent, tabStudent, crStudent));
+
+        byte[] csvBytes = csvStudentImporter.exportStudentsCsv();
+        String csv = new String(csvBytes, StandardCharsets.UTF_8);
+
+        String[] lines = csv.split("\n");
+        assertThat(lines[0]).isEqualTo("Name,Registration Number,Exam Center,Registered Subjects");
+        assertThat(csv).doesNotContain("Login PIN");
+        assertThat(csv).doesNotContain("$argon2id$");
+        assertThat(csv).doesNotContain("!LEGACY_INVALIDATED!");
+
+        assertThat(lines[1]).contains("\"'=CMD|'/C calc'!A0\"");
+        assertThat(lines[1]).contains("\"'@SUM(1+1)\"");
+        assertThat(lines[1]).contains("\"'+HYPERLINK(\"\"http://evil\"\",\"\"bad\"\")\"");
+        assertThat(lines[2]).contains("\"'-2+3\"");
+        assertThat(lines[2]).contains("\"'\tmalicious\"");
+        assertThat(lines[3]).contains("\"'\rmalicious\"");
     }
 }

@@ -1,15 +1,12 @@
+import type { ReactNode } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from './components/ui/sonner';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import axios, { type InternalAxiosRequestConfig } from 'axios';
 
 import 'katex/dist/katex.min.css';
 
-export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
-
-import axios from 'axios';
 import AdminLayout from './layouts/AdminLayout';
 import AdminDashboard from './pages/admin/Dashboard';
 import SubjectList from './pages/admin/SubjectList';
@@ -23,11 +20,32 @@ import Dashboard from './pages/student/Dashboard';
 import ExamDashboard from './pages/exam/ExamDashboard';
 import ResultPage from './pages/student/ResultPage';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import {
+  clearStoredToken,
+  decodeJwtPayload,
+  getStoredToken,
+  isSessionEvictedProblem,
+  parseErrorResponseData,
+  setAuthRedirecting,
+  setStoredToken,
+} from './lib/auth';
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
+
+interface RetryableRequestConfig extends InternalAxiosRequestConfig {
+  _retry?: boolean;
+}
 
 axios.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
-  if (token && config.url?.startsWith('/api')) {
-    if (!config.url.includes('/api/v1/auth/login') && !config.url.includes('/api/v1/auth/refresh')) {
+  const url = config.url ?? '';
+  if (url.startsWith('/api')) {
+    if (url.includes('/api/v1/auth/')) {
+      config.withCredentials = true;
+    }
+    const token = localStorage.getItem('token');
+    if (token && !url.includes('/api/v1/auth/login') && !url.includes('/api/v1/auth/refresh')) {
       config.headers.Authorization = `Bearer ${token}`;
     }
   }
@@ -35,11 +53,12 @@ axios.interceptors.request.use((config) => {
 });
 
 let isRefreshing = false;
-let failedQueue: { resolve: (value?: any) => void; reject: (reason?: any) => void }[] = [];
+let isRedirecting = false;
+let failedQueue: { resolve: (value: string) => void; reject: (reason?: unknown) => void }[] = [];
 
-const processQueue = (error: any, token: string | null = null) => {
+const processQueue = (error: unknown, token: string | null = null) => {
   failedQueue.forEach((prom) => {
-    if (error) {
+    if (error || !token) {
       prom.reject(error);
     } else {
       prom.resolve(token);
@@ -48,40 +67,52 @@ const processQueue = (error: any, token: string | null = null) => {
   failedQueue = [];
 };
 
+const redirectToLogin = (errorCode: 'session_expired' | 'auth_expired') => {
+  if (isRedirecting) {
+    return;
+  }
+  isRedirecting = true;
+  setAuthRedirecting(true);
+  if (window.location.pathname.startsWith('/admin')) {
+    window.location.href = `/admin?error=${errorCode}`;
+  } else {
+    window.location.href = `/?error=${errorCode}`;
+  }
+};
+
 axios.interceptors.response.use(
   (response) => response,
-  async (error) => {
-    const originalRequest = error.config;
-    if (originalRequest?.url?.includes('/api/v1/auth/refresh') || originalRequest?.url?.includes('/api/v1/auth/login')) {
+  async (error: unknown) => {
+    if (!axios.isAxiosError(error)) {
+      return Promise.reject(error);
+    }
+    const originalRequest = error.config as RetryableRequestConfig | undefined;
+    const requestUrl = originalRequest?.url ?? '';
+
+    if (
+      requestUrl.includes('/api/v1/auth/refresh') ||
+      requestUrl.includes('/api/v1/auth/login') ||
+      requestUrl.includes('/api/v1/auth/logout')
+    ) {
       return Promise.reject(error);
     }
 
-    if (error.response && error.response.status === 401 && !originalRequest._retry) {
-      // If the 401 is due to concurrent login on another device, evict immediately
-      const isAnotherDevice = error.response.data?.message === 'Session active on another device';
-      if (isAnotherDevice) {
-        // Fire-and-forget: clear Redis key without blocking navigation
-        axios.post('/api/v1/auth/logout', {}, { withCredentials: true }).catch(() => {});
-        localStorage.removeItem('token');
-        if (window.location.pathname.startsWith('/admin')) {
-          window.location.href = '/admin?error=session_expired';
-        } else {
-          window.location.href = '/?error=session_expired';
-        }
+    if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
+      const problemData = await parseErrorResponseData(error.response.data);
+      if (isSessionEvictedProblem(problemData)) {
+        clearStoredToken();
+        processQueue(error, null);
+        redirectToLogin('session_expired');
         return Promise.reject(error);
       }
 
       if (isRefreshing) {
-        return new Promise(function (resolve, reject) {
+        return new Promise<string>((resolve, reject) => {
           failedQueue.push({ resolve, reject });
-        })
-          .then((token) => {
-            originalRequest.headers.Authorization = 'Bearer ' + token;
-            return axios(originalRequest);
-          })
-          .catch((err) => {
-            return Promise.reject(err);
-          });
+        }).then((token) => {
+          originalRequest.headers.Authorization = `Bearer ${token}`;
+          return axios(originalRequest);
+        });
       }
 
       originalRequest._retry = true;
@@ -89,43 +120,63 @@ axios.interceptors.response.use(
 
       try {
         const res = await axios.post('/api/v1/auth/refresh', {}, { withCredentials: true });
-        const newToken = res.data.data.accessToken;
-        localStorage.setItem('token', newToken);
-        axios.defaults.headers.common.Authorization = 'Bearer ' + newToken;
-        originalRequest.headers.Authorization = 'Bearer ' + newToken;
+        const newToken: unknown = res.data?.data?.accessToken;
+        if (typeof newToken !== 'string' || !newToken.trim()) {
+          throw new Error('Refresh response did not include an access token');
+        }
+        setStoredToken(newToken);
+        originalRequest.headers.Authorization = `Bearer ${newToken}`;
         processQueue(null, newToken);
         return axios(originalRequest);
       } catch (refreshError) {
         processQueue(refreshError, null);
-        // Fire-and-forget: clear Redis key silently on refresh failure
-        axios.post('/api/v1/auth/logout', {}, { withCredentials: true }).catch(() => {});
-        localStorage.removeItem('token');
-        if (window.location.pathname.startsWith('/admin')) {
-          window.location.href = '/admin?error=session_expired';
-        } else {
-          window.location.href = '/?error=session_expired';
+        if (
+          axios.isAxiosError(refreshError) &&
+          (refreshError.response?.status === 401 || refreshError.response?.status === 403)
+        ) {
+          const refreshProblem = await parseErrorResponseData(refreshError.response.data);
+          const errorCode = isSessionEvictedProblem(refreshProblem) ? 'session_expired' : 'auth_expired';
+          clearStoredToken();
+          redirectToLogin(errorCode);
         }
         return Promise.reject(refreshError);
       } finally {
         isRefreshing = false;
       }
     }
+
     return Promise.reject(error);
   }
 );
 
-function AdminProtectedRoute({ children }: { children: React.ReactNode }) {
-  const token = localStorage.getItem('token');
+function AdminProtectedRoute({ children }: { children: ReactNode }) {
+  const token = getStoredToken();
   if (!token) {
     return <AdminLogin />;
+  }
+  const payload = decodeJwtPayload(token);
+  if (!payload?.role) {
+    clearStoredToken();
+    return <AdminLogin />;
+  }
+  if (payload.role !== 'ROLE_ADMIN' && payload.role !== 'ROLE_SUPERVISOR') {
+    return <Navigate to="/dashboard" replace />;
   }
   return <>{children}</>;
 }
 
-function StudentProtectedRoute({ children }: { children: React.ReactNode }) {
-  const token = localStorage.getItem('token');
+function StudentProtectedRoute({ children }: { children: ReactNode }) {
+  const token = getStoredToken();
   if (!token) {
     return <Navigate to="/" replace />;
+  }
+  const payload = decodeJwtPayload(token);
+  if (!payload?.role) {
+    clearStoredToken();
+    return <Navigate to="/" replace />;
+  }
+  if (payload.role !== 'ROLE_STUDENT') {
+    return <Navigate to="/admin" replace />;
   }
   return <>{children}</>;
 }
@@ -136,27 +187,36 @@ export default function App() {
       <ErrorBoundary>
         <Routes>
           <Route path="/" element={<Login />} />
-          
-          <Route path="/dashboard" element={
-            <StudentProtectedRoute>
-              <Dashboard />
-            </StudentProtectedRoute>
-          } />
-          
-          <Route path="/exam" element={
-            <StudentProtectedRoute>
-              <ExamDashboard />
-            </StudentProtectedRoute>
-          } />
-          
-          <Route path="/result" element={
-            <StudentProtectedRoute>
-              <ResultPage />
-            </StudentProtectedRoute>
-          } />
-          
-          <Route 
-            path="/admin" 
+
+          <Route
+            path="/dashboard"
+            element={
+              <StudentProtectedRoute>
+                <Dashboard />
+              </StudentProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/exam"
+            element={
+              <StudentProtectedRoute>
+                <ExamDashboard />
+              </StudentProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/result"
+            element={
+              <StudentProtectedRoute>
+                <ResultPage />
+              </StudentProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/admin"
             element={
               <AdminProtectedRoute>
                 <AdminLayout />
@@ -171,13 +231,13 @@ export default function App() {
           </Route>
         </Routes>
       </ErrorBoundary>
-      <Toaster 
-        position="top-center" 
+      <Toaster
+        position="top-center"
         toastOptions={{
           classNames: {
             success: '!bg-[#008751] !text-white !border-[#008751] [&_svg]:text-white',
             error: '!bg-red-600 !text-white !border-red-600 [&_svg]:text-white',
-          }
+          },
         }}
       />
     </BrowserRouter>

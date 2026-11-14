@@ -14,6 +14,7 @@ import RichText from '../../components/RichText';
 import ExamTimer from '../../components/ExamTimer';
 import SubmitButton from '../../components/SubmitButton';
 import QuestionRenderer from '../../components/QuestionRenderer';
+import { isAuthRedirecting } from '../../lib/auth';
 
 export default function ExamDashboard() {
   const dispatch = useDispatch<AppDispatch>();
@@ -62,7 +63,7 @@ export default function ExamDashboard() {
 
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (!exam.isExamTerminated) {
+      if (!exam.isExamTerminated && !isAuthRedirecting()) {
         e.preventDefault();
         e.returnValue = '';
       }
