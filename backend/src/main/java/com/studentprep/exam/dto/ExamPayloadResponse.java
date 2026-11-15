@@ -1,6 +1,7 @@
 package com.studentprep.exam.dto;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 public class ExamPayloadResponse {
@@ -8,19 +9,54 @@ public class ExamPayloadResponse {
     private Long shuffleSeed;
     private Integer durationMinutes;
     private List<Object> questions;
-    private java.util.Map<String, String> contexts;
+    private Map<String, String> contexts;
     private StudentProfileDto student;
 
-    public UUID getExamId() { return examId; }
-    public void setExamId(UUID examId) { this.examId = examId; }
-    public Long getShuffleSeed() { return shuffleSeed; }
-    public void setShuffleSeed(Long shuffleSeed) { this.shuffleSeed = shuffleSeed; }
-    public Integer getDurationMinutes() { return durationMinutes; }
-    public void setDurationMinutes(Integer durationMinutes) { this.durationMinutes = durationMinutes; }
-    public List<Object> getQuestions() { return questions; }
-    public void setQuestions(List<Object> questions) { this.questions = questions; }
-    public java.util.Map<String, String> getContexts() { return contexts; }
-    public void setContexts(java.util.Map<String, String> contexts) { this.contexts = contexts; }
-    public StudentProfileDto getStudent() { return student; }
-    public void setStudent(StudentProfileDto student) { this.student = student; }
+    public UUID getExamId() {
+        return examId;
+    }
+
+    public void setExamId(UUID examId) {
+        this.examId = examId;
+    }
+
+    public Long getShuffleSeed() {
+        return shuffleSeed;
+    }
+
+    public void setShuffleSeed(Long shuffleSeed) {
+        this.shuffleSeed = shuffleSeed;
+    }
+
+    public Integer getDurationMinutes() {
+        return durationMinutes;
+    }
+
+    public void setDurationMinutes(Integer durationMinutes) {
+        this.durationMinutes = durationMinutes;
+    }
+
+    public List<Object> getQuestions() {
+        return questions;
+    }
+
+    public void setQuestions(List<Object> questions) {
+        this.questions = questions;
+    }
+
+    public Map<String, String> getContexts() {
+        return contexts;
+    }
+
+    public void setContexts(Map<String, String> contexts) {
+        this.contexts = contexts;
+    }
+
+    public StudentProfileDto getStudent() {
+        return student;
+    }
+
+    public void setStudent(StudentProfileDto student) {
+        this.student = student;
+    }
 }

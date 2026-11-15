@@ -9,12 +9,14 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.TestingAuthenticationToken;
 
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -56,5 +58,41 @@ class StudentResultsControllerTest {
                     .contains(expectedFilename);
             assertThat(response.getBody()).isEqualTo(samplePdf);
         }
+    }
+
+    @Test
+    void getMyResultSlip_ThrowsAccessDenied_WhenServiceRejectsFlaggedOrPendingSlip() {
+        UUID resultId = UUID.randomUUID();
+        TestingAuthenticationToken auth = new TestingAuthenticationToken("FLAGGED_USER", null, "ROLE_STUDENT");
+
+        when(studentResultService.generateStudentResultSlip("FLAGGED_USER", resultId))
+                .thenThrow(new AccessDeniedException("Result slip is withheld pending administrative review"));
+
+        assertThatThrownBy(() -> controller.getMyResultSlip(resultId, auth))
+                .isInstanceOf(AccessDeniedException.class)
+                .hasMessageContaining("withheld pending administrative review");
+    }
+
+    @Test
+    void getMyLatestResultSlip_ThrowsAccessDenied_WhenServiceRejectsFlaggedOrPendingSlip() {
+        TestingAuthenticationToken auth = new TestingAuthenticationToken("FLAGGED_USER", null, "ROLE_STUDENT");
+
+        when(studentResultService.generateLatestStudentResultSlip("FLAGGED_USER"))
+                .thenThrow(new AccessDeniedException("Examination under administrative review - result slip withheld"));
+
+        assertThatThrownBy(() -> controller.getMyLatestResultSlip(auth))
+                .isInstanceOf(AccessDeniedException.class)
+                .hasMessageContaining("under administrative review");
+    }
+
+    @Test
+    void getAdminResultSlip_ThrowsAccessDenied_WhenServiceRejectsNonEligibleSlip() {
+        UUID resultId = UUID.randomUUID();
+
+        when(studentResultService.generateAdminResultSlip(resultId))
+                .thenThrow(new AccessDeniedException("Result slip is withheld pending administrative review"));
+
+        assertThatThrownBy(() -> controller.getAdminResultSlip(resultId))
+                .isInstanceOf(AccessDeniedException.class);
     }
 }

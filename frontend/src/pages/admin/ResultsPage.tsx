@@ -1,8 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import axios from 'axios';
 import { toast } from 'sonner';
-import { FileText, X, Award, BookOpen } from 'lucide-react';
+import { FileText, X, Award, BookOpen, ShieldAlert, CheckCircle, Ban, RotateCcw } from 'lucide-react';
 import { buildResultSlipFilename, triggerPdfResponseDownload } from '../../lib/pdf';
+import { Button } from '../../components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { getStoredToken, decodeJwtPayload } from '../../lib/auth';
 
 interface TopicStat {
   correct: number;
@@ -15,12 +18,42 @@ interface ParsedSubject {
   topics: { name: string; correct: number; total: number }[];
 }
 
+interface FlaggedSession {
+  sessionId: string;
+  studentId: string;
+  studentName: string;
+  registrationNumber: string;
+  status: string;
+  tabSwitchCount: number;
+  startTime: string;
+  expectedEndTime?: string;
+  endTime?: string;
+  resultId?: string;
+  moderationStatus?: string;
+}
+
 export default function ResultsPage() {
   const [results, setResults] = useState<any[]>([]);
+  const [flaggedSessions, setFlaggedSessions] = useState<FlaggedSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedResult, setSelectedResult] = useState<any>(null);
+  const [moderatingId, setModeratingId] = useState<string | null>(null);
 
-  useEffect(() => {
+  const token = getStoredToken();
+  const userRole = decodeJwtPayload(token)?.role;
+  const isAdmin = userRole === 'ROLE_ADMIN';
+
+  const fetchFlaggedSessions = useCallback(() => {
+    axios.get('/api/v1/admin/analytics/flagged-sessions')
+      .then((res) => {
+        if (res?.data?.data) {
+          setFlaggedSessions(Array.isArray(res.data.data) ? res.data.data : []);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const fetchResults = useCallback(() => {
     axios.get('/api/v1/admin/analytics/results')
       .then(res => {
         setResults(res.data.data);
@@ -32,6 +65,53 @@ export default function ResultsPage() {
         setLoading(false);
       });
   }, []);
+
+  useEffect(() => {
+    fetchResults();
+    fetchFlaggedSessions();
+  }, [fetchResults, fetchFlaggedSessions]);
+
+  const handleClearLate = async (sessionId: string) => {
+    setModeratingId(sessionId);
+    try {
+      await axios.post(`/api/v1/admin/exams/sessions/${sessionId}/clear-late`);
+      toast.success('Late submission cleared.');
+      fetchFlaggedSessions();
+      fetchResults();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Failed to clear late submission.');
+    } finally {
+      setModeratingId(null);
+    }
+  };
+
+  const handleVoidSession = async (sessionId: string) => {
+    setModeratingId(sessionId);
+    try {
+      await axios.post(`/api/v1/admin/exams/sessions/${sessionId}/void`);
+      toast.success('Session voided.');
+      fetchFlaggedSessions();
+      fetchResults();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Failed to void session.');
+    } finally {
+      setModeratingId(null);
+    }
+  };
+
+  const handleGrantRetake = async (studentId: string, sessionId: string) => {
+    setModeratingId(sessionId);
+    try {
+      await axios.post(`/api/v1/admin/students/${studentId}/grant-retake`);
+      toast.success('Retake granted.');
+      fetchFlaggedSessions();
+      fetchResults();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Failed to grant retake.');
+    } finally {
+      setModeratingId(null);
+    }
+  };
 
   const handleDownloadResultSlip = async (
     resultId: string,
@@ -98,9 +178,114 @@ export default function ResultsPage() {
     <div className="p-8 font-sans bg-slate-50 min-h-screen">
       <div className="flex justify-between items-center mb-8">
         <div>
-          <h1 className="text-3xl font-bold text-slate-900">Exam Results</h1>
-          <p className="text-slate-600 text-sm mt-1">Review student mock test performances, subject scores, and official slips.</p>
+          <h1 className="text-3xl font-bold text-slate-900">Exam Results & Moderation</h1>
+          <p className="text-slate-600 text-sm mt-1">Review student mock test performances, moderate flagged sessions, and issue official slips.</p>
         </div>
+      </div>
+
+      {/* Flagged Sessions Moderation Panel */}
+      <Card className="mb-8 border-t-4 border-t-amber-500 bg-white shadow-sm">
+        <CardHeader className="pb-4 border-b border-slate-100 flex flex-row items-center justify-between">
+          <div>
+            <CardTitle className="text-lg font-bold text-slate-900 flex items-center gap-2">
+              <ShieldAlert className="w-5 h-5 text-amber-600" />
+              Flagged Sessions & Moderation Queue
+            </CardTitle>
+            <p className="text-xs text-slate-500 mt-1">
+              Sessions requiring administrator review (Malpractice strikes, Late submissions, Expired sittings).
+            </p>
+          </div>
+          {!isAdmin && (
+            <span className="text-xs font-semibold bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full border border-slate-200">
+              Read-only (Supervisor)
+            </span>
+          )}
+        </CardHeader>
+        <CardContent className="p-0">
+          {flaggedSessions.length === 0 ? (
+            <div className="p-6 text-sm text-slate-500 text-center">
+              No sessions currently flagged or awaiting moderation.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm text-slate-600">
+                <thead className="bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-700 border-b border-slate-200">
+                  <tr>
+                    <th className="p-4">Candidate</th>
+                    <th className="p-4">Reg Number</th>
+                    <th className="p-4">Status</th>
+                    <th className="p-4">Strikes</th>
+                    <th className="p-4">Moderation</th>
+                    <th className="p-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {flaggedSessions.map((session) => (
+                    <tr key={session.sessionId} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="p-4 font-semibold text-slate-900">{session.studentName}</td>
+                      <td className="p-4 font-mono text-xs">{session.registrationNumber}</td>
+                      <td className="p-4">
+                        <span className={`inline-block px-2.5 py-1 text-xs font-bold rounded-full ${
+                          session.status === 'FLAGGED_TAB_SWITCH'
+                            ? 'bg-red-100 text-red-800'
+                            : session.status === 'LATE_SUBMISSION_FLAGGED'
+                            ? 'bg-amber-100 text-amber-800'
+                            : 'bg-slate-100 text-slate-800'
+                        }`}>
+                          {session.status}
+                        </span>
+                      </td>
+                      <td className="p-4 font-bold text-slate-800">{session.tabSwitchCount ?? 0}</td>
+                      <td className="p-4">
+                        <span className="text-xs font-semibold text-slate-700">
+                          {session.moderationStatus || 'PENDING'}
+                        </span>
+                      </td>
+                      <td className="p-4 text-right space-x-2">
+                        {session.status === 'LATE_SUBMISSION_FLAGGED' && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={!isAdmin || moderatingId === session.sessionId}
+                            onClick={() => handleClearLate(session.sessionId)}
+                            className="text-xs text-emerald-700 border-emerald-300 hover:bg-emerald-50 h-8"
+                          >
+                            <CheckCircle className="w-3.5 h-3.5 mr-1" />
+                            Clear Late
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={!isAdmin || moderatingId === session.sessionId}
+                          onClick={() => handleVoidSession(session.sessionId)}
+                          className="text-xs text-red-700 border-red-300 hover:bg-red-50 h-8"
+                        >
+                          <Ban className="w-3.5 h-3.5 mr-1" />
+                          Void
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={!isAdmin || moderatingId === session.sessionId}
+                          onClick={() => handleGrantRetake(session.studentId, session.sessionId)}
+                          className="text-xs text-blue-700 border-blue-300 hover:bg-blue-50 h-8"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5 mr-1" />
+                          Grant Retake
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <div className="mb-4">
+        <h2 className="text-xl font-bold text-slate-900">Completed Exam Results</h2>
       </div>
 
       {loading ? (
@@ -114,12 +299,14 @@ export default function ResultsPage() {
                 <th className="p-4">Total Score</th>
                 <th className="p-4">Max Score</th>
                 <th className="p-4">Percentage</th>
+                <th className="p-4">Moderation</th>
                 <th className="p-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {results.map((result, idx) => {
                 const percentage = result.maxScore > 0 ? ((result.totalScore / result.maxScore) * 100).toFixed(1) : '0.0';
+                const isSlipBlocked = result.moderationStatus === 'PENDING_REVIEW' || result.moderationStatus === 'VOIDED';
                 return (
                   <tr key={idx} className="hover:bg-slate-50 transition-colors">
                     <td className="p-4 font-semibold text-slate-900">{result.studentName}</td>
@@ -128,6 +315,17 @@ export default function ResultsPage() {
                     <td className="p-4">
                       <span className="inline-block px-2.5 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold rounded-full">
                         {percentage}%
+                      </span>
+                    </td>
+                    <td className="p-4">
+                      <span className={`inline-block px-2 py-0.5 text-xs font-bold rounded-full border ${
+                        result.moderationStatus === 'PENDING_REVIEW'
+                          ? 'bg-amber-50 text-amber-800 border-amber-200'
+                          : result.moderationStatus === 'VOIDED'
+                          ? 'bg-red-50 text-red-800 border-red-200'
+                          : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                      }`}>
+                        {result.moderationStatus || 'ELIGIBLE'}
                       </span>
                     </td>
                     <td className="p-4 text-right">
@@ -140,11 +338,16 @@ export default function ResultsPage() {
                         </button>
                         <button 
                           onClick={() => handleDownloadResultSlip(result.id, result.studentName, result.registrationNumber)}
-                          className="inline-flex items-center gap-1.5 px-3 py-1 bg-white border border-[#008751]/40 text-[#008751] hover:bg-emerald-50 rounded text-xs font-semibold shadow-xs cursor-pointer transition-colors"
-                          title="Download official examination result slip PDF"
+                          disabled={isSlipBlocked}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1 bg-white border rounded text-xs font-semibold shadow-xs transition-colors ${
+                            isSlipBlocked 
+                              ? 'border-slate-200 text-slate-400 cursor-not-allowed bg-slate-50' 
+                              : 'border-[#008751]/40 text-[#008751] hover:bg-emerald-50 cursor-pointer'
+                          }`}
+                          title={isSlipBlocked ? "Slip withheld until moderation clearance" : "Download official examination result slip PDF"}
                         >
                           <FileText className="w-3.5 h-3.5" />
-                          Slip (PDF)
+                          {isSlipBlocked ? 'Slip Withheld' : 'Slip (PDF)'}
                         </button>
                       </div>
                     </td>
@@ -153,7 +356,7 @@ export default function ResultsPage() {
               })}
               {results.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="p-8 text-center text-slate-500 text-sm">
+                  <td colSpan={6} className="p-8 text-center text-slate-500 text-sm">
                     No results recorded yet. Completed exams will appear here.
                   </td>
                 </tr>

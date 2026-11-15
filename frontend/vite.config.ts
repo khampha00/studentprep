@@ -14,7 +14,7 @@ export default defineConfig({
         enabled: true // crucial for testing offline in dev mode
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,woff,ttf}'],
         runtimeCaching: [
           {
             urlPattern: /\/api\/v1\/exams\/active\/sync/,
@@ -28,6 +28,19 @@ export default defineConfig({
                 }
               }
             }
+          },
+          {
+            urlPattern: /\/api\/v1\/exams\/active\/submit/,
+            method: 'POST',
+            handler: 'NetworkOnly',
+            options: {
+              backgroundSync: {
+                name: 'exam-submit-queue',
+                options: {
+                  maxRetentionTime: 15 // 15 minutes
+                }
+              }
+            }
           }
         ]
       },
@@ -38,7 +51,18 @@ export default defineConfig({
         theme_color: '#008751',
         background_color: '#f8fafc',
         display: 'standalone',
-        icons: [] // We don't have icons yet, so keep it empty
+        icons: [
+          {
+            src: '/icons/icon-192.png',
+            sizes: '192x192',
+            type: 'image/png'
+          },
+          {
+            src: '/icons/icon.svg',
+            sizes: '512x512',
+            type: 'image/svg+xml'
+          }
+        ]
       }
     })
   ],
@@ -49,6 +73,17 @@ export default defineConfig({
   },
   server: {
     host: true,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      }
+    }
+  },
+  preview: {
+    host: true,
+    port: 5173,
+    strictPort: true,
     proxy: {
       '/api': {
         target: 'http://localhost:8080',

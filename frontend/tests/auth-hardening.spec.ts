@@ -24,8 +24,26 @@ function extractOpenPdfText(pdfBuffer: Buffer): string {
   expect(pdfBuffer.subarray(0, 5).toString('ascii')).toBe('%PDF-');
   const raw = pdfBuffer.toString('latin1');
   const sections: string[] = [raw];
+  const handledOffsets = new Set<number>();
+
+  const sizedStreamRegex =
+    /<<(?:(?!<<|>>)[\s\S])*?\/Length\s+(\d+)(?:(?!<<|>>)[\s\S])*?>>\s*stream(?:\r\n|\n|\r)/g;
+  for (const match of raw.matchAll(sizedStreamRegex)) {
+    const length = Number(match[1]);
+    const start = (match.index ?? 0) + match[0].length;
+    handledOffsets.add(start);
+    const body = pdfBuffer.subarray(start, start + length);
+    try {
+      sections.push(inflateSync(body).toString('latin1'));
+    } catch {
+      sections.push(body.toString('latin1'));
+    }
+  }
+
   const streamRegex = /stream(?:\r\n|\n|\r)([\s\S]*?)endstream/g;
   for (const match of raw.matchAll(streamRegex)) {
+    const start = (match.index ?? 0) + match[0].length - match[1].length - 'endstream'.length;
+    if (handledOffsets.has(start)) continue;
     const candidate = match[1].replace(/(?:\r\n|\n|\r)$/, '');
     const body = Buffer.from(candidate, 'latin1');
     try {
@@ -433,8 +451,13 @@ test.describe.serial('Auth, Identity & Secrets Hardening (Unmocked)', () => {
       );
       expect(studentForbiddenBulkRes.status()).toBe(403);
       await logoutViaApi(studentPage);
+      await studentPage.goto('/');
 
       const refreshedSingleRow = await findStudentRow(page, created.registrationNumber);
+
+      // Re-focus admin window and center the target row away from bottom-right Sonner toasts
+      await page.bringToFront();
+      await refreshedSingleRow.evaluate((el) => el.scrollIntoView({ block: 'center' }));
 
       const slipDownloadPromise = page.waitForEvent('download');
       await refreshedSingleRow.getByRole('button', { name: 'Slip', exact: true }).click();

@@ -3,111 +3,235 @@ package com.studentprep.exam;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.studentprep.exam.dto.ExamPayloadResponse;
+import com.studentprep.exam.dto.StudentProfileDto;
 import com.studentprep.questionbank.Question;
+import com.studentprep.questionbank.Subject;
 import com.studentprep.student.Student;
 import com.studentprep.student.StudentInternalAPI;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
+import java.util.UUID;
 
 @Service
 public class ExamPayloadGenerator {
 
+    private static final Logger log = LoggerFactory.getLogger(ExamPayloadGenerator.class);
+
     private final ExamCacheService examCacheService;
     private final ObjectMapper objectMapper;
     private final StudentInternalAPI studentInternalAPI;
+    private final ExamTimingProperties timingProperties;
 
-    private static final int EXAM_DURATION_MINUTES = 120; // 2 hours
-
-    public ExamPayloadGenerator(ExamCacheService examCacheService, ObjectMapper objectMapper, StudentInternalAPI studentInternalAPI) {
+    public ExamPayloadGenerator(
+            ExamCacheService examCacheService,
+            ObjectMapper objectMapper,
+            StudentInternalAPI studentInternalAPI,
+            ExamTimingProperties timingProperties
+    ) {
         this.examCacheService = examCacheService;
         this.objectMapper = objectMapper;
         this.studentInternalAPI = studentInternalAPI;
+        this.timingProperties = timingProperties;
     }
 
     @Transactional(readOnly = true)
-    public ExamPayloadResponse getActivePayload(UUID userId) {
+    public Map<String, Object> buildSessionSnapshot(UUID userId, Integer shuffleSeed) {
         List<Question> cachedQuestions = examCacheService.getCachedQuestions();
 
-        Student student = studentInternalAPI.findById(userId).orElse(null);
+        Student student = (userId != null) ? studentInternalAPI.findById(userId).orElse(null) : null;
         List<String> enrolledSubjectIds = new ArrayList<>();
         Map<String, String> enrolledSubjectNames = new HashMap<>();
-        if (student != null) {
-            for (com.studentprep.questionbank.Subject subject : student.getSubjects()) {
-                enrolledSubjectIds.add(subject.getId().toString());
-                enrolledSubjectNames.put(subject.getId().toString(), subject.getName());
+        if (student != null && student.getSubjects() != null) {
+            for (Subject subject : student.getSubjects()) {
+                if (subject != null && subject.getId() != null) {
+                    enrolledSubjectIds.add(subject.getId().toString());
+                    enrolledSubjectNames.put(subject.getId().toString(), subject.getName());
+                }
             }
         }
 
         List<Question> filteredQuestions = new ArrayList<>();
         for (Question q : cachedQuestions) {
-            if (student == null || q.getSubjectId() == null) {
+            if (q == null) {
+                continue;
+            }
+            if (student == null || enrolledSubjectIds.isEmpty() || q.getSubjectId() == null) {
                 filteredQuestions.add(q);
             } else if (enrolledSubjectIds.contains(q.getSubjectId().toString())) {
                 filteredQuestions.add(q);
             }
         }
 
-        return generateStrippedPayload(filteredQuestions, student, enrolledSubjectNames);
-    }
-
-    private ExamPayloadResponse generateStrippedPayload(List<Question> questions, Student student, Map<String, String> enrolledSubjectNames) {
-        List<Object> strippedQuestions = new ArrayList<>();
         Map<String, String> contextsMap = new HashMap<>();
-        
-        Map<String, List<Object>> groupedQuestions = new HashMap<>();
-        List<Object> standaloneQuestions = new ArrayList<>();
+        Map<String, List<Map<String, Object>>> groupedQuestions = new LinkedHashMap<>();
+        List<Map<String, Object>> standaloneQuestions = new ArrayList<>();
 
-        long hashSeed = 0;
-        for (Question q : questions) {
-            hashSeed += q.getId().hashCode();
-            Map<String, Object> map = this.objectMapper.convertValue(q, new TypeReference<Map<String, Object>>() {});
-            
+        for (Question q : filteredQuestions) {
+            Map<String, Object> map = objectMapper.convertValue(q, new TypeReference<Map<String, Object>>() {});
+            if (q.getId() != null) {
+                map.put("id", q.getId().toString());
+            }
+
             String subjectId = q.getSubjectId() != null ? q.getSubjectId().toString() : null;
             if (subjectId != null) {
                 Map<String, String> subjMap = new HashMap<>();
                 subjMap.put("id", subjectId);
                 String subjName = enrolledSubjectNames.get(subjectId);
+                if (subjName == null && q.getSubject() != null) {
+                    subjName = q.getSubject().getName();
+                }
                 subjMap.put("name", subjName != null ? subjName : "Unknown Subject");
                 map.put("subject", subjMap);
             }
-            Map<String, Object> content = (Map<String, Object>) map.get("content");
-            if (content != null) {
-                content.remove("correctOption");
-            }
-            if (q.getContext() != null) {
+
+            if (q.getContext() != null && q.getContext().getId() != null) {
                 String ctxId = q.getContext().getId().toString();
                 map.put("contextId", ctxId);
-                contextsMap.put(ctxId, q.getContext().getPassage());
+                if (q.getContext().getPassage() != null) {
+                    contextsMap.put(ctxId, q.getContext().getPassage());
+                }
                 groupedQuestions.computeIfAbsent(ctxId, k -> new ArrayList<>()).add(map);
             } else {
                 standaloneQuestions.add(map);
             }
         }
-        
-        List<List<Object>> allGroups = new ArrayList<>();
+
+        List<List<Map<String, Object>>> allGroups = new ArrayList<>();
         allGroups.addAll(groupedQuestions.values());
-        for (Object sq : standaloneQuestions) {
-            allGroups.add(Collections.singletonList(sq));
+        for (Map<String, Object> sq : standaloneQuestions) {
+            List<Map<String, Object>> single = new ArrayList<>();
+            single.add(sq);
+            allGroups.add(single);
         }
-        
-        long seed = hashSeed == 0 ? 12345L : hashSeed;
+
+        // Sort groups by the first question's id to ensure a stable baseline order before shuffling
+        allGroups.sort(Comparator.comparing(group -> {
+            if (group.isEmpty() || group.get(0) == null) {
+                return "";
+            }
+            Object id = group.get(0).get("id");
+            return id != null ? id.toString() : "";
+        }));
+
+        long seed = (shuffleSeed != null) ? shuffleSeed.longValue() : 12345L;
         Collections.shuffle(allGroups, new Random(seed));
-        
-        for (List<Object> group : allGroups) {
-            strippedQuestions.addAll(group);
+
+        List<Map<String, Object>> rawQuestions = new ArrayList<>();
+        for (List<Map<String, Object>> group : allGroups) {
+            rawQuestions.addAll(group);
         }
-        
-        ExamPayloadResponse response = new ExamPayloadResponse();
-        response.setExamId(UUID.randomUUID());
-        response.setShuffleSeed(seed);
-        response.setDurationMinutes(EXAM_DURATION_MINUTES);
-        response.setQuestions(strippedQuestions);
-        response.setContexts(contextsMap);
+
+        Map<String, Object> snapshot = new HashMap<>();
+        snapshot.put("examId", UUID.randomUUID().toString());
+        snapshot.put("shuffleSeed", shuffleSeed != null ? shuffleSeed : 12345);
+        snapshot.put("durationMinutes", (int) timingProperties.getDurationMinutes());
+        snapshot.put("questions", rawQuestions);
+        snapshot.put("contexts", contextsMap);
         if (student != null) {
-            response.setStudent(new com.studentprep.exam.dto.StudentProfileDto(student.getName(), student.getRegistrationNumber()));
+            Map<String, String> studentMap = new HashMap<>();
+            studentMap.put("name", student.getName());
+            studentMap.put("registrationNumber", student.getRegistrationNumber());
+            snapshot.put("student", studentMap);
         }
+
+        return snapshot;
+    }
+
+    public ExamPayloadResponse projectFromSnapshot(Map<String, Object> snapshotPayload) {
+        if (snapshotPayload == null) {
+            return new ExamPayloadResponse();
+        }
+
+        Object rawQuestionsObj = snapshotPayload.get("questions");
+        List<Object> strippedQuestions = new ArrayList<>();
+        if (rawQuestionsObj != null) {
+            List<Object> clonedQuestions = objectMapper.convertValue(rawQuestionsObj, new TypeReference<List<Object>>() {});
+            stripAnswerKeysRecursively(clonedQuestions);
+            strippedQuestions = clonedQuestions;
+        }
+
+        @SuppressWarnings("unchecked")
+        Map<String, String> contexts = (Map<String, String>) snapshotPayload.get("contexts");
+        if (contexts == null) {
+            contexts = Collections.emptyMap();
+        }
+
+        int durationMinutes = (int) timingProperties.getDurationMinutes();
+        Object durObj = snapshotPayload.get("durationMinutes");
+        if (durObj instanceof Number num) {
+            durationMinutes = num.intValue();
+        }
+
+        long shuffleSeed = 12345L;
+        Object seedObj = snapshotPayload.get("shuffleSeed");
+        if (seedObj instanceof Number num) {
+            shuffleSeed = num.longValue();
+        }
+
+        UUID examId = UUID.randomUUID();
+        Object examIdObj = snapshotPayload.get("examId");
+        if (examIdObj instanceof String str) {
+            try {
+                examId = UUID.fromString(str);
+            } catch (Exception ex) {
+                log.debug("Could not parse examId string: {}", str);
+            }
+        } else if (examIdObj instanceof UUID uuid) {
+            examId = uuid;
+        }
+
+        StudentProfileDto studentProfile = null;
+        Object studentObj = snapshotPayload.get("student");
+        if (studentObj instanceof Map<?, ?> smap) {
+            String name = (String) smap.get("name");
+            String regNo = (String) smap.get("registrationNumber");
+            studentProfile = new StudentProfileDto(name, regNo);
+        }
+
+        ExamPayloadResponse response = new ExamPayloadResponse();
+        response.setExamId(examId);
+        response.setShuffleSeed(shuffleSeed);
+        response.setDurationMinutes(durationMinutes);
+        response.setQuestions(strippedQuestions);
+        response.setContexts(contexts);
+        if (studentProfile != null) {
+            response.setStudent(studentProfile);
+        }
+
         return response;
+    }
+
+    @Transactional(readOnly = true)
+    public ExamPayloadResponse getActivePayload(UUID userId) {
+        int defaultSeed = 12345;
+        Map<String, Object> snapshot = buildSessionSnapshot(userId, defaultSeed);
+        return projectFromSnapshot(snapshot);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void stripAnswerKeysRecursively(Object node) {
+        if (node instanceof Map<?, ?> rawMap) {
+            Map<String, Object> map = (Map<String, Object>) rawMap;
+            map.remove("correctOption");
+            map.remove("isCorrect");
+            for (Object value : new ArrayList<>(map.values())) {
+                stripAnswerKeysRecursively(value);
+            }
+        } else if (node instanceof List<?> list) {
+            for (Object item : list) {
+                stripAnswerKeysRecursively(item);
+            }
+        }
     }
 }

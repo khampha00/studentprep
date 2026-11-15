@@ -1,22 +1,35 @@
 import type { Middleware } from '@reduxjs/toolkit';
 import { db } from './db';
 import type { RootState } from './store';
+import { decodeJwtPayload, getStoredToken } from '../lib/auth';
 
 let lastTimerPersist = 0;
 const TIMER_PERSIST_INTERVAL_MS = 30_000;
 
-const persistExamState = (state: RootState) => {
+const persistExamState = async (state: RootState) => {
   if (!state.exam.sessionId) return;
-  db.examStates.put({
+  const ownerIdentifier = state.exam.ownerIdentifier
+    || state.exam.student?.registrationNumber
+    || decodeJwtPayload(getStoredToken())?.sub
+    || 'anonymous';
+
+  const existing = await db.examStates.get(state.exam.sessionId);
+  await db.examStates.put({
+    ...existing,
     id: state.exam.sessionId,
+    ownerIdentifier,
     shuffleSeed: state.exam.shuffleSeed,
     answers: state.exam.answers,
     timeLeft: state.exam.timeLeft,
+    expectedEndTimeMs: state.exam.expectedEndTimeMs || existing?.expectedEndTimeMs,
     lastUpdated: state.exam.lastUpdated,
     tabSwitchCount: state.exam.tabSwitchCount,
     isExamTerminated: state.exam.isExamTerminated,
     flagged: state.exam.flagged,
-    isSynced: false
+    isSynced: false,
+    questions: state.exam.questions?.length ? state.exam.questions : existing?.questions,
+    contexts: state.exam.contexts && Object.keys(state.exam.contexts).length ? state.exam.contexts : existing?.contexts,
+    student: state.exam.student || existing?.student,
   });
 };
 
@@ -38,4 +51,3 @@ export const persistenceMiddleware: Middleware = store => next => action => {
   }
   return result;
 };
-

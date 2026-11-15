@@ -1,25 +1,45 @@
 package com.studentprep.questionbank;
 
-import org.springframework.beans.factory.annotation.Autowired;
+import com.studentprep.common.ApiResponse;
+import jakarta.validation.Valid;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
-import java.util.UUID;
-import com.studentprep.common.ApiResponse;
 import java.util.Map;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1")
 public class SubjectController {
 
+    private static final Logger log = LoggerFactory.getLogger(SubjectController.class);
+    private static final String CACHE_KEY = "exam:questions:all";
+
     private final SubjectRepository subjectRepository;
     private final QuestionRepository questionRepository;
+    private final RedisTemplate<String, Object> redisTemplate;
 
-    @Autowired
-    public SubjectController(SubjectRepository subjectRepository, QuestionRepository questionRepository) {
+    public SubjectController(
+            SubjectRepository subjectRepository,
+            QuestionRepository questionRepository,
+            RedisTemplate<String, Object> redisTemplate) {
         this.subjectRepository = subjectRepository;
         this.questionRepository = questionRepository;
+        this.redisTemplate = redisTemplate;
     }
 
     @GetMapping("/subjects")
@@ -33,7 +53,7 @@ public class SubjectController {
     }
 
     @PostMapping("/admin/subjects")
-    public ResponseEntity<ApiResponse<Subject>> createSubject(@jakarta.validation.Valid @RequestBody Subject subject) {
+    public ResponseEntity<ApiResponse<Subject>> createSubject(@Valid @RequestBody Subject subject) {
         if (subject.getName() == null || subject.getName().trim().isEmpty()) {
             return ResponseEntity.badRequest().build();
         }
@@ -49,14 +69,18 @@ public class SubjectController {
     }
 
     @PutMapping("/admin/subjects/{id}")
-    public ResponseEntity<ApiResponse<Subject>> updateSubject(@PathVariable UUID id, @jakarta.validation.Valid @RequestBody Subject updatedSubject) {
+    public ResponseEntity<ApiResponse<Subject>> updateSubject(
+            @PathVariable UUID id,
+            @Valid @RequestBody Subject updatedSubject) {
         if (updatedSubject.getName() == null || updatedSubject.getName().trim().isEmpty()) {
             return ResponseEntity.badRequest().build();
         }
         return subjectRepository.findById(id)
                 .map(subject -> {
                     subject.setName(updatedSubject.getName());
-                    return ResponseEntity.ok(ApiResponse.of(subjectRepository.save(subject)));
+                    Subject saved = subjectRepository.save(subject);
+                    evictQuestionsCache();
+                    return ResponseEntity.ok(ApiResponse.of(saved));
                 })
                 .orElse(ResponseEntity.notFound().build());
     }
@@ -68,10 +92,35 @@ public class SubjectController {
         }
 
         if (questionRepository.existsBySubject_Id(id)) {
-            return ResponseEntity.badRequest().build(); // or use a specific error response
+            return ResponseEntity.badRequest().build();
         }
 
         subjectRepository.deleteById(id);
+        evictQuestionsCache();
         return ResponseEntity.ok(ApiResponse.of(Map.of("status", "DELETED")));
+    }
+
+    private void evictQuestionsCache() {
+        Runnable evictTask = () -> {
+            try {
+                redisTemplate.delete(CACHE_KEY);
+                log.info("Evicted questions cache {} on subject change", CACHE_KEY);
+            } catch (DataAccessException ex) {
+                log.warn("Failed to evict questions cache {} on subject change: {}. Continuing fail-open.", CACHE_KEY, ex.getMessage());
+            } catch (Exception ex) {
+                log.warn("Unexpected error evicting questions cache: {}", ex.getMessage());
+            }
+        };
+
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    evictTask.run();
+                }
+            });
+        } else {
+            evictTask.run();
+        }
     }
 }

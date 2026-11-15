@@ -48,8 +48,8 @@ All endpoints (except `/api/v1/auth/login`, `/api/v1/auth/refresh`, `/api/v1/aut
 *   **Evicted Session:** If the presented `jti` no longer matches Redis `session:<CANONICAL_ID>`, protected endpoints return `401 Unauthorized` with `detail: "Session active on another device"` and `code: "SESSION_EVICTED"`.
 *   **Role Separation:**
     *   `ROLE_STUDENT`: Exam execution (`/api/v1/exams/**`) and own results (`/api/v1/students/me/**`, `/api/v1/student/results`).
-    *   `ROLE_SUPERVISOR`: Read-only monitoring & directory views (`GET /api/v1/admin/analytics/**`, `GET /api/v1/admin/questions`, `GET /api/v1/admin/subjects`, `GET /api/v1/admin/students`, `GET /api/v1/admin/students/{id}`, `GET /api/v1/admin/students/{id}/results`). Mutating admin routes, `/export`, `/api/v1/admin/students/credentials/pdf` (`GET` & `POST`), and `/*/slip` are forbidden (`403`).
-    *   `ROLE_ADMIN`: Full administrative CRUD, PIN reset, workstation unlock, CSV & credential PDF exports, ingestion, and HITL question approval.
+    *   `ROLE_SUPERVISOR`: Read-only monitoring & directory views (`GET /api/v1/admin/analytics/**`, including `GET /api/v1/admin/analytics/flagged-sessions`, `GET /api/v1/admin/questions`, `GET /api/v1/admin/subjects`, `GET /api/v1/admin/students`, `GET /api/v1/admin/students/{id}`, `GET /api/v1/admin/students/{id}/results`). Mutating admin routes, `/export`, `/api/v1/admin/students/credentials/pdf` (`GET` & `POST`), `/*/slip`, and moderation mutations (`clear-late`, `void`, `grant-retake`) are forbidden (`403`).
+    *   `ROLE_ADMIN`: Full administrative CRUD, PIN reset, workstation unlock, CSV & credential PDF exports, ingestion, HITL question approval, and exam moderation (`POST /api/v1/admin/exams/sessions/{sessionId}/clear-late`, `POST /api/v1/admin/exams/sessions/{sessionId}/void`, `POST /api/v1/admin/students/{id}/grant-retake`).
 
 ---
 
@@ -178,10 +178,60 @@ Updates a question (fixing LLM/OCR hallucinations) and approves it for live exam
 
 ---
 
-## 4. Exam Engine (Student Facing)
+## 4. Exam Engine (Student Facing — `/api/v1/exams/**`, `ROLE_STUDENT`)
+
+### `POST /api/v1/exams/start`
+Starts a new exam session or resumes an existing `IN_PROGRESS` session.
+*   **Frozen Snapshot & Deterministic Permutation:** Generates or loads the immutable `snapshot_payload` stored in PostgreSQL, deterministically shuffled per session `shuffleSeed`. All `correctOption` fields are stripped recursively (including child questions).
+*   **Deadline Calculation:** Computes `expectedEndTime = startTime + durationMinutes` (120 minutes).
+*   **Single Sitting Policy:** A student may have at most one active attempt per exam.
+
+**Response (200 OK):**
+```json
+{
+  "data": {
+    "sessionId": "uuid-session-123",
+    "shuffleSeed": 4829103,
+    "expectedEndTime": "2026-08-23T12:05:00Z",
+    "serverTime": "2026-08-23T10:05:00Z",
+    "payload": {
+      "examId": "uuid-exam-2026",
+      "durationMinutes": 120,
+      "questions": [
+        {
+          "id": "q-101",
+          "type": "MCQ_LATEX",
+          "text": "Evaluate...",
+          "options": { "A": "...", "B": "...", "C": "...", "D": "..." }
+        }
+      ],
+      "contexts": {},
+      "student": {
+        "name": "Jane Doe",
+        "registrationNumber": "123456JF"
+      },
+      "answers": {},
+      "timeLeft": 7200,
+      "tabSwitchCount": 0,
+      "resumed": false
+    },
+    "statePayload": {},
+    "resumed": false
+  }
+}
+```
+
+**Failure Responses:**
+*   `401 Unauthorized`: Missing or invalid access JWT.
+*   `403 Forbidden` (`code: "MALPRACTICE_BLOCKED"`): Candidate holds an active (`superseded = false`) `FLAGGED_TAB_SWITCH` session.
+*   `409 Conflict` (`code: "EXAM_ALREADY_COMPLETED"`): Candidate already holds a non-superseded terminal session (`SUBMITTED`, `TIME_EXPIRED`, `LATE_SUBMISSION_FLAGGED`), including when an expired `IN_PROGRESS` session is finalized on resume.
+
+---
 
 ### `GET /api/v1/exams/active/payload`
-Fetches the massive JSON payload for the active exam. The backend serves this directly from the Redis Cache.
+Fetches the stripped question and context payload for the active exam.
+*   **200 OK:** Serves stripped exam payload from the active `IN_PROGRESS` session's frozen `snapshot_payload` if one exists (falling back to fail-open catalog lookup only when no active session exists yet, never bypassing malpractice check).
+*   **403 Forbidden** (`code: "MALPRACTICE_BLOCKED"`): Candidate holds an active `FLAGGED_TAB_SWITCH` session.
 
 **Response (200 OK):**
 ```json
@@ -192,28 +242,35 @@ Fetches the massive JSON payload for the active exam. The backend serves this di
     "durationMinutes": 120,
     "questions": [
       {
-         "id": "q-101",
-         "type": "MCQ_LATEX",
-         "text": "Evaluate...",
-         "options": { "A": "...", "B": "...", "C": "...", "D": "..." }
-         // SECURITY WARNING: correctOption MUST BE STRIPPED from this payload
+        "id": "q-101",
+        "type": "MCQ_LATEX",
+        "text": "Evaluate...",
+        "options": { "A": "...", "B": "...", "C": "...", "D": "..." }
       }
-    ]
+    ],
+    "contexts": {}
   }
 }
 ```
 
-### `GET /api/v1/exams/active/session`
-Fetches the last known session state from PostgreSQL. Used heavily by the frontend `examSlice` on initialization to handle multi-device failover and rehydration.
+---
 
-**Response (200 OK):**
+### `GET /api/v1/exams/active/session` *(Strictly Read-Only)*
+Fetches the last known session state from PostgreSQL. Used by client `examSlice` on initialization to handle multi-device failover and rehydration.
+*   **Strictly Read-Only:** Executes in a `@Transactional(readOnly = true)` context without performing any database writes or finalization sweeps.
+*   **200 OK (Active):** When `status == IN_PROGRESS` and `now <= expectedEndTime + syncGraceSeconds`:
 ```json
 {
   "data": {
     "sessionId": "uuid-session-123",
     "status": "IN_PROGRESS",
-    "timeLeft": 5400,
-    "lastSyncedAt": "2026-08-23T10:05:00Z",
+    "startTime": "2026-08-23T10:05:00Z",
+    "expectedEndTime": "2026-08-23T12:05:00Z",
+    "serverTime": "2026-08-23T10:15:00Z",
+    "shuffleSeed": 4829103,
+    "timeLeft": 6600,
+    "lastSyncedAt": "2026-08-23T10:14:30Z",
+    "tabSwitchCount": 0,
     "answers": {
       "q-101": "B",
       "q-102": "A"
@@ -221,19 +278,28 @@ Fetches the last known session state from PostgreSQL. Used heavily by the fronte
   }
 }
 ```
+*   **200 OK (Null / Expired):** When the session has exceeded `expectedEndTime + syncGraceSeconds` (before the background sweeper runs) or when no active `IN_PROGRESS` session exists, returns `{ "data": null }` cleanly without throwing `500` or writing to the database.
 
-### `POST /api/v1/exams/active/sync`
-Background Web Worker endpoint to persist state changes incrementally. Highly concurrent, must be extremely fast.
+---
+
+### `POST /api/v1/exams/active/sync?sessionId={uuid}`
+Periodic background sync endpoint to persist answers and proctoring strikes incrementally.
+*   **Validation:** `ExamSyncRequest` MUST include `@NotNull Map<String, Object> statePayload`.
+*   **Optimistic Locking:** Enforces ownership and `@Version` check, retrying or handling conflict safely.
+*   **Monotonic Proctoring Strikes:** Computes `tabSwitchCount = max(existingCount, reportedCount)`. If `tabSwitchCount >= 3`, transitions session to `FLAGGED_TAB_SWITCH`, publishes `ExamSessionFlaggedEvent` (evicting Redis session token `AFTER_COMMIT`), and returns `403 Forbidden` (`code: "MALPRACTICE_BLOCKED"`).
+*   **Terminal Session Guard:** If a non-final sync attempts to mutate an already terminal session (`SUBMITTED`, `TIME_EXPIRED`, `LATE_SUBMISSION_FLAGGED`, `FLAGGED_TAB_SWITCH`), returns `409 Conflict` (`code: "SESSION_ALREADY_FINALIZED"`). Replays with `isFinal=true` remain idempotent.
+*   **Deadline Guard:** If non-final and `now > expectedEndTime + syncGraceSeconds` (30s grace), closes the expired session cleanly and returns **`410 Gone`** (`code: "EXAM_WINDOW_EXPIRED"`).
+*   **Delegated Finalization:** If `isFinal == true`, delegates to shared submission logic enforcing the 900s offline cutoff.
 
 **Request Body:**
 ```json
 {
-  "answers": {
-    "q-101": "B",
-    "q-103": "D"
+  "statePayload": {
+    "answers": { "q-101": "B", "q-103": "D" },
+    "timeLeft": 5370,
+    "tabSwitchCount": 1
   },
-  "timeLeft": 5370,
-  "tabSwitchCount": 1
+  "isFinal": false
 }
 ```
 
@@ -247,23 +313,87 @@ Background Web Worker endpoint to persist state changes incrementally. Highly co
 }
 ```
 
-### `POST /api/v1/exams/active/submit`
-Final exam submission. Triggers the `ExamSubmittedEvent` via the Transactional Outbox for grading.
+---
+
+### `POST /api/v1/exams/active/submit?sessionId={uuid}&reason={reason}`
+Final exam submission endpoint. Evaluates deadline windows and triggers idempotent grading via transactional outbox (`ExamSubmittedEvent`).
+*   **Deadline Enforcement & Windows:**
+    *   `now <= expectedEndTime + syncGraceSeconds` (30s): Finalizes with status `SUBMITTED` (`moderationStatus = ELIGIBLE`).
+    *   `expectedEndTime + syncGraceSeconds < now <= expectedEndTime + offlineSubmitGraceSeconds` (900s / 15m): Finalizes with status `LATE_SUBMISSION_FLAGGED` (`moderationStatus = PENDING_REVIEW`), withholding result slip and leaderboard entry until admin review.
+    *   `now > expectedEndTime + offlineSubmitGraceSeconds` (900s): Returns **`410 Gone`** (`code: "OFFLINE_CUTOFF_EXCEEDED"`). Session transitions to `TIME_EXPIRED`.
+*   **Proctoring Termination:** If submitted with reason `TAB_SWITCH_EXCEEDED` or strikes `>= 3`, finalizes with status `FLAGGED_TAB_SWITCH` (`moderationStatus = FLAGGED`), publishes `ExamSessionFlaggedEvent`, evicts Redis session key, and suppresses grading and slips.
+*   **Idempotency:** Repeated final submission calls on an already-finalized session are strictly idempotent (`200 OK` returning current terminal status, firing zero duplicate `ExamSubmittedEvent`).
 
 **Request Body:**
 ```json
 {
-  "answers": { "q-101": "B", "q-102": "A", "q-103": "D" },
-  "timeLeft": 0,
-  "tabSwitchCount": 1
+  "statePayload": {
+    "answers": { "q-101": "B", "q-102": "A", "q-103": "D" },
+    "timeLeft": 0,
+    "tabSwitchCount": 1
+  },
+  "isFinal": true
 }
 ```
+
 **Response (200 OK):**
 ```json
 {
   "data": {
     "status": "SUBMITTED",
-    "message": "Exam successfully submitted."
+    "serverTime": "2026-08-23T12:04:55Z",
+    "moderationStatus": "ELIGIBLE"
   }
 }
 ```
+
+---
+
+## 5. Student Results & Moderation Gating (`/api/v1/students/me/**`, `/api/v1/student/results`, `ROLE_STUDENT`)
+
+### `GET /api/v1/students/me/results` & `GET /api/v1/student/results`
+Returns candidate's graded exam results with moderation status metadata (`ELIGIBLE`, `PENDING_REVIEW`, `CLEARED`, `VOIDED`).
+*   **Clean Status Display:** When a candidate holds an active (`superseded = false`) `FLAGGED_TAB_SWITCH` session and no eligible result, returns:
+    ```json
+    {
+      "data": {
+        "reviewStatus": "UNDER_REVIEW",
+        "message": "Your examination attempt is under administrative review."
+      }
+    }
+    ```
+*   **Pending Review Banner:** For `PENDING_REVIEW` (`LATE_SUBMISSION_FLAGGED`), UI renders `"Submission Pending Review — Official Slip Withheld"`.
+
+### `GET /api/v1/students/me/results/{resultId}/slip` & `/latest/slip`
+Downloads the official printable student result slip PDF.
+*   **403 Forbidden** (`code: "MALPRACTICE_REVIEW_REQUIRED"` or `"RESULT_PENDING_REVIEW"`): Access is strictly blocked whenever the candidate has an active `FLAGGED_TAB_SWITCH` session OR the target `ExamResult.moderationStatus` is `PENDING_REVIEW` or `VOIDED`.
+*   **200 OK:** Only `ELIGIBLE` or `CLEARED` results generate a student PDF slip.
+
+---
+
+## 6. Admin Moderation & Exam Analytics (`/api/v1/admin/**`)
+
+### `GET /api/v1/admin/analytics/results` (`ROLE_ADMIN` or `ROLE_SUPERVISOR`)
+Returns paginated list of all candidate examination results.
+*   **Response (200 OK):** Wrapped in `PagedResponse` `{ "data": [...], "meta": { "page", "size", "totalElements", "totalPages" } }`.
+*   **Null Safety:** Guaranteed null-safe serialization even when `topicBreakdown` is null.
+*   **Fields:** `id`, `examSessionId`, `studentName`, `registrationNumber`, `totalScore`, `maxScore`, `topicBreakdown`, `gradedAt`, `moderationStatus`, `sessionStatus`.
+
+### `GET /api/v1/admin/analytics/flagged-sessions` (`ROLE_ADMIN` or `ROLE_SUPERVISOR`)
+Returns active non-superseded `FLAGGED_TAB_SWITCH`, `LATE_SUBMISSION_FLAGGED`, and `TIME_EXPIRED` sessions with full student metadata (`studentId`, `studentName`, `registrationNumber`, `sessionId`, `status`, `tabSwitchCount`, `startTime`, `endTime`, linked `resultId`, and `moderationStatus` if graded) for administrative review.
+
+### `POST /api/v1/admin/exams/sessions/{sessionId}/clear-late` (`ROLE_ADMIN` only, audited via `AuditLogAspect`)
+Clears a late submission flag.
+*   **Validation:** Verifies session exists and is in `LATE_SUBMISSION_FLAGGED` status. Returns `409 Conflict` if session is not late flagged.
+*   **Action:** Promotes `ExamSession.status` to `SUBMITTED`, promotes `ExamResult.moderationStatus` to `CLEARED`, publishes `ExamModerationUpdatedEvent`, and updates candidate entry on Redis leaderboard (`LeaderboardService`).
+*   **Authorization:** `ROLE_ADMIN` only. `ROLE_SUPERVISOR` receives `403 Forbidden`.
+
+### `POST /api/v1/admin/exams/sessions/{sessionId}/void` (`ROLE_ADMIN` only, audited via `AuditLogAspect`)
+Voids an examination attempt and result.
+*   **Action:** Marks `ExamResult.moderationStatus = VOIDED`, removes candidate entry from Redis leaderboard, and preserves session audit trail.
+*   **Authorization:** `ROLE_ADMIN` only. `ROLE_SUPERVISOR` receives `403 Forbidden`.
+
+### `POST /api/v1/admin/students/{id}/grant-retake` (`ROLE_ADMIN` only, audited via `AuditLogAspect`)
+Grants candidate permission for a fresh examination sitting.
+*   **Action:** Marks current non-superseded `ExamSession` rows for candidate `{id}` as `superseded = true`, evicts active Redis session key, and enables the candidate to start one fresh exam sitting via `POST /api/v1/exams/start`.
+*   **Authorization:** `ROLE_ADMIN` only. `ROLE_SUPERVISOR` receives `403 Forbidden`.

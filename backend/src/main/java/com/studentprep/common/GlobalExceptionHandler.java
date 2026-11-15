@@ -37,6 +37,7 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
 import java.net.URI;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -76,6 +77,17 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(ResponseStatusException.class)
     public ResponseEntity<ProblemDetail> handleResponseStatusException(ResponseStatusException ex) {
         ProblemDetail problem = buildSanitizedErrorResponseProblem(ex);
+        if (ex.getStatusCode() == HttpStatus.GONE) {
+            problem.setTitle("Gone");
+            try {
+                Method getCodeMethod = ex.getClass().getMethod("getCode");
+                Object codeVal = getCodeMethod.invoke(ex);
+                if (codeVal != null) {
+                    problem.setProperty("code", codeVal);
+                }
+            } catch (Exception ignored) {
+            }
+        }
         return ResponseEntity.status(ex.getStatusCode()).headers(ex.getHeaders()).body(problem);
     }
 
@@ -176,6 +188,23 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ProblemDetail handleUnexpectedException(Exception ex) {
+        if ("ExamDeadlineExpiredException".equals(ex.getClass().getSimpleName())) {
+            ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                    HttpStatus.GONE,
+                    sanitizeMessage(ex.getMessage(), "Exam deadline has expired")
+            );
+            problem.setTitle("Gone");
+            try {
+                Method getCode = ex.getClass().getMethod("getCode");
+                Object code = getCode.invoke(ex);
+                if (code != null) {
+                    problem.setProperty("code", code);
+                }
+            } catch (Exception ignored) {
+            }
+            setInstanceFromCurrentRequest(problem);
+            return problem;
+        }
         log.error("Unhandled exception mapped to 500 ProblemDetail", ex);
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(
                 HttpStatus.INTERNAL_SERVER_ERROR,

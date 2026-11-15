@@ -1,16 +1,25 @@
 package com.studentprep.questionbank;
 
 import com.studentprep.questionbank.dto.ContextLinkRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.ArrayList;
 
 @Service
 public class QuestionService implements QuestionInternalAPI {
+
+    private static final Logger log = LoggerFactory.getLogger(QuestionService.class);
+    private static final String CACHE_KEY = "exam:questions:all";
 
     private final QuestionRepository repository;
     private final QuestionContextRepository contextRepository;
@@ -23,7 +32,27 @@ public class QuestionService implements QuestionInternalAPI {
     }
 
     private void evictQuestionsCache() {
-        redisTemplate.delete("exam:questions:all");
+        Runnable evictTask = () -> {
+            try {
+                redisTemplate.delete(CACHE_KEY);
+                log.info("Evicted questions cache {} from Redis", CACHE_KEY);
+            } catch (DataAccessException ex) {
+                log.warn("Failed to evict questions cache {} from Redis: {}. Continuing fail-open.", CACHE_KEY, ex.getMessage());
+            } catch (Exception ex) {
+                log.warn("Unexpected error evicting questions cache: {}", ex.getMessage());
+            }
+        };
+
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    evictTask.run();
+                }
+            });
+        } else {
+            evictTask.run();
+        }
     }
 
     @Override
