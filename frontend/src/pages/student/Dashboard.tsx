@@ -3,10 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { useDispatch } from 'react-redux';
 import axios from 'axios';
 import type { AppDispatch } from '../../store/store';
-import { initializeExam, fetchExamPayload } from '../../store/examSlice';
+import { initializeExam, fetchExamPayload, clearAllLocalExamData, resetExamState } from '../../store/examSlice';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '../../components/ui/card';
-import { AlertTriangle, BookOpen, Clock, ShieldCheck, PlayCircle, LogOut, FileText } from 'lucide-react';
+import { AlertTriangle, BookOpen, Clock, ShieldCheck, PlayCircle, LogOut, FileText, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { buildResultSlipFilename, triggerPdfResponseDownload } from '../../lib/pdf';
 
@@ -17,6 +17,7 @@ export default function Dashboard() {
   const [hasActiveExam, setHasActiveExam] = useState(false);
   const [pastResults, setPastResults] = useState<any[]>([]);
   const [loadingResults, setLoadingResults] = useState(true);
+  const [reviewStatus, setReviewStatus] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -28,7 +29,7 @@ export default function Dashboard() {
         } else if (isMounted) {
           setHasActiveExam(false);
         }
-      } catch (err) {
+      } catch {
         // If 401, axios interceptor handles session eviction
       }
     };
@@ -40,15 +41,27 @@ export default function Dashboard() {
         if (isMounted && res.data?.data) {
           setPastResults(res.data.data);
         }
-      } catch (err) {
+      } catch {
         // Ignore or handle silently
       } finally {
         if (isMounted) setLoadingResults(false);
       }
     };
 
+    const checkStudentReviewStatus = async () => {
+      try {
+        const res = await axios.get('/api/v1/student/results');
+        if (isMounted && res.data?.data?.reviewStatus) {
+          setReviewStatus(res.data.data.reviewStatus);
+        }
+      } catch {
+        // Ignore if no current result
+      }
+    };
+
     checkActiveSession();
     fetchPastResults();
+    checkStudentReviewStatus();
     
     const interval = setInterval(checkActiveSession, 10000);
     return () => {
@@ -85,7 +98,7 @@ export default function Dashboard() {
         buildResultSlipFilename(studentName, registrationNumber, resultId || 'latest')
       );
       toast.success('Result slip downloaded successfully!');
-    } catch (err: any) {
+    } catch {
       toast.error('Failed to download result slip. Please try again.');
     }
   };
@@ -96,6 +109,8 @@ export default function Dashboard() {
     } catch {
       // best-effort: proceed even if the server is unreachable
     }
+    await clearAllLocalExamData();
+    dispatch(resetExamState());
     localStorage.removeItem('token');
     navigate('/');
   };
@@ -163,6 +178,18 @@ export default function Dashboard() {
                 </div>
               </div>
               
+              {reviewStatus === 'UNDER_REVIEW' && (
+                <div className="mb-6 bg-red-50 border-2 border-red-500 p-5 rounded-lg flex items-start gap-4">
+                  <ShieldAlert className="text-red-600 w-6 h-6 shrink-0 mt-0.5" />
+                  <div>
+                    <h3 className="text-base font-bold text-red-900">Under Administrative Review</h3>
+                    <p className="text-sm text-red-800 mt-1">
+                      Your examination attempt has been flagged for administrative review due to proctoring rule violations (Tab Switching). Official scores and result slips are currently withheld. Please contact your examination center administrator for clearance.
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {hasActiveExam && (
                 <div className="mb-6 bg-emerald-50 border-2 border-[#008751] p-4 rounded-lg flex items-start gap-3">
                   <PlayCircle className="text-[#008751] w-5 h-5 shrink-0 mt-0.5" />
@@ -211,9 +238,15 @@ export default function Dashboard() {
                           <div className="text-xs text-slate-500 mt-0.5">{new Date(result.gradedAt).toLocaleString()}</div>
                         </div>
                         <div className="text-right">
-                          <span className="inline-block px-2.5 py-1 bg-emerald-100 text-emerald-800 text-xs font-bold rounded-full">
-                            {result.maxScore > 0 ? ((result.totalScore / result.maxScore) * 100).toFixed(1) : 0}%
-                          </span>
+                          {result.moderationStatus === 'PENDING_REVIEW' ? (
+                            <span className="inline-block px-2.5 py-1 bg-amber-100 text-amber-800 text-xs font-bold rounded-full">
+                              Submission Pending Review
+                            </span>
+                          ) : (
+                            <span className="inline-block px-2.5 py-1 bg-emerald-100 text-emerald-800 text-xs font-bold rounded-full">
+                              {result.maxScore > 0 ? ((result.totalScore / result.maxScore) * 100).toFixed(1) : 0}%
+                            </span>
+                          )}
                         </div>
                       </div>
 
@@ -260,15 +293,23 @@ export default function Dashboard() {
 
                       {/* Download Result Slip Button */}
                       <div className="mt-4 pt-3 border-t border-slate-100">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleDownloadResultSlip(result.id, result.studentName, result.registrationNumber)}
-                          className="w-full text-xs font-semibold text-[#008751] border-[#008751]/40 hover:bg-emerald-50 flex items-center justify-center gap-1.5 shadow-xs"
-                        >
-                          <FileText className="w-3.5 h-3.5" />
-                          Download Result Slip (PDF)
-                        </Button>
+                        {result.moderationStatus === 'PENDING_REVIEW' ? (
+                          <div className="text-center py-1 bg-amber-50 rounded border border-amber-200">
+                            <span className="text-xs font-semibold text-amber-800">
+                              Submission Pending Review — Official Slip Withheld
+                            </span>
+                          </div>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleDownloadResultSlip(result.id, result.studentName, result.registrationNumber)}
+                            className="w-full text-xs font-semibold text-[#008751] border-[#008751]/40 hover:bg-emerald-50 flex items-center justify-center gap-1.5 shadow-xs"
+                          >
+                            <FileText className="w-3.5 h-3.5" />
+                            Download Result Slip (PDF)
+                          </Button>
+                        )}
                       </div>
                     </div>
                   ))}

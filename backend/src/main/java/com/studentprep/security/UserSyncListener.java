@@ -13,6 +13,10 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.modulith.events.ApplicationModuleListener;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+
+import java.util.UUID;
 
 @Component
 public class UserSyncListener {
@@ -30,6 +34,7 @@ public class UserSyncListener {
 
     @ApplicationModuleListener
     void onStudentCreated(StudentCreatedEvent event) {
+        reconcileIdentifierConflict(event.studentId(), event.registrationNumber());
         User user = userRepository.findById(event.studentId()).orElseGet(() -> {
             User created = new User();
             created.setId(event.studentId());
@@ -44,18 +49,20 @@ public class UserSyncListener {
 
     @ApplicationModuleListener
     void onStudentUpdated(StudentUpdatedEvent event) {
+        reconcileIdentifierConflict(event.studentId(), event.registrationNumber());
         userRepository.findById(event.studentId()).ifPresent(user -> {
             String previousIdentifier = user.getIdentifier();
             user.setIdentifier(event.registrationNumber());
             userRepository.save(user);
             if (previousIdentifier != null && !previousIdentifier.equalsIgnoreCase(event.registrationNumber())) {
-                deleteRedisKeys(previousIdentifier);
+                scheduleRedisCleanup(previousIdentifier);
             }
         });
     }
 
     @ApplicationModuleListener
     void onStudentPinReset(StudentPinResetEvent event) {
+        reconcileIdentifierConflict(event.studentId(), event.registrationNumber());
         userRepository.findById(event.studentId()).ifPresentOrElse(user -> {
             user.setIdentifier(event.registrationNumber());
             user.setPinHash(event.newPinHash());
@@ -70,13 +77,43 @@ public class UserSyncListener {
             created.setPinResetRequired(event.pinResetRequired());
             userRepository.save(created);
         });
-        deleteRedisKeys(event.registrationNumber());
+        scheduleRedisCleanup(event.registrationNumber());
     }
 
     @ApplicationModuleListener
     void onStudentDeleted(StudentDeletedEvent event) {
         userRepository.findById(event.studentId()).ifPresent(userRepository::delete);
-        deleteRedisKeys(event.registrationNumber());
+        scheduleRedisCleanup(event.registrationNumber());
+    }
+
+    private void reconcileIdentifierConflict(UUID targetUserId, String registrationNumber) {
+        if (targetUserId == null || registrationNumber == null || registrationNumber.trim().isEmpty()) {
+            return;
+        }
+        userRepository.findByIdentifierIgnoreCase(registrationNumber)
+                .filter(conflict -> !conflict.getId().equals(targetUserId))
+                .ifPresent(conflict -> {
+                    log.warn("Removing duplicate User row {} holding identifier {} before reconciling student {}",
+                            conflict.getId(), registrationNumber, targetUserId);
+                    userRepository.delete(conflict);
+                    userRepository.flush();
+                });
+    }
+
+    private void scheduleRedisCleanup(String registrationNumber) {
+        if (registrationNumber == null || registrationNumber.trim().isEmpty()) {
+            return;
+        }
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    deleteRedisKeys(registrationNumber);
+                }
+            });
+        } else {
+            deleteRedisKeys(registrationNumber);
+        }
     }
 
     private void deleteRedisKeys(String registrationNumber) {

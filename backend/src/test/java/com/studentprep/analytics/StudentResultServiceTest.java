@@ -3,6 +3,7 @@ package com.studentprep.analytics;
 import com.studentprep.analytics.StudentResultService.GeneratedResultSlip;
 import com.studentprep.analytics.StudentResultService.LatestStudentResultDto;
 import com.studentprep.analytics.StudentResultService.StudentResultDto;
+import com.studentprep.exam.ExamInternalAPI;
 import com.studentprep.student.Student;
 import com.studentprep.student.StudentInternalAPI;
 import org.junit.jupiter.api.BeforeEach;
@@ -34,6 +35,9 @@ class StudentResultServiceTest {
     @Mock
     private StudentInternalAPI studentInternalAPI;
 
+    @Mock
+    private ExamInternalAPI examInternalAPI;
+
     private StudentResultService service;
 
     @BeforeEach
@@ -46,7 +50,8 @@ class StudentResultServiceTest {
                 examResultRepository,
                 studentInternalAPI,
                 summaryService,
-                slipGenerator);
+                slipGenerator,
+                examInternalAPI);
     }
 
     @Test
@@ -127,10 +132,97 @@ class StudentResultServiceTest {
             assertThat(dto.studentName()).isEqualTo("Ngozi Eze");
             assertThat(dto.registrationNumber()).isEqualTo("654321AB");
             assertThat(dto.subjectScores().get("Biology")).containsExactly(25, 30);
+            assertThat(dto.moderationStatus()).isEqualTo("ELIGIBLE");
         });
         assertThat(latest.score()).isEqualTo(25);
         assertThat(latest.total()).isEqualTo(30);
         assertThat(latest.registrationNumber()).isEqualTo("654321AB");
+        assertThat(latest.moderationStatus()).isEqualTo("ELIGIBLE");
+    }
+
+    @Test
+    void generateStudentResultSlip_ThrowsAccessDenied_WhenStudentHasActiveFlaggedSession() {
+        UUID studentId = UUID.randomUUID();
+        UUID resultId = UUID.randomUUID();
+        Student student = buildStudent(studentId, "Malpractice Student", "MAL001");
+
+        when(studentInternalAPI.findByRegistrationNumberIgnoreCase("MAL001"))
+                .thenReturn(Optional.of(student));
+        when(examInternalAPI.hasFlaggedSession(studentId)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.generateStudentResultSlip("MAL001", resultId))
+                .isInstanceOf(AccessDeniedException.class)
+                .hasMessageContaining("under administrative review");
+    }
+
+    @Test
+    void generateStudentResultSlip_ThrowsAccessDenied_WhenResultPendingReview() {
+        UUID studentId = UUID.randomUUID();
+        UUID resultId = UUID.randomUUID();
+        Student student = buildStudent(studentId, "Late Student", "LATE001");
+        ExamResult result = buildResult(resultId, student, 40, 60);
+        result.setModerationStatus(ExamResultModerationStatus.PENDING_REVIEW);
+
+        when(studentInternalAPI.findByRegistrationNumberIgnoreCase("LATE001"))
+                .thenReturn(Optional.of(student));
+        when(examResultRepository.findById(resultId)).thenReturn(Optional.of(result));
+
+        assertThatThrownBy(() -> service.generateStudentResultSlip("LATE001", resultId))
+                .isInstanceOf(AccessDeniedException.class)
+                .hasMessageContaining("withheld pending administrative review");
+    }
+
+    @Test
+    void generateAdminResultSlip_ThrowsAccessDenied_WhenResultVoided() {
+        UUID studentId = UUID.randomUUID();
+        UUID resultId = UUID.randomUUID();
+        Student student = buildStudent(studentId, "Voided Student", "VOID001");
+        ExamResult result = buildResult(resultId, student, 40, 60);
+        result.setModerationStatus(ExamResultModerationStatus.VOIDED);
+
+        when(examResultRepository.findById(resultId)).thenReturn(Optional.of(result));
+
+        assertThatThrownBy(() -> service.generateAdminResultSlip(resultId))
+                .isInstanceOf(AccessDeniedException.class)
+                .hasMessageContaining("withheld pending administrative review");
+    }
+
+    @Test
+    void getLatestResult_ReturnsUnderReview_WhenStudentHasActiveFlaggedSession() {
+        UUID studentId = UUID.randomUUID();
+        Student student = buildStudent(studentId, "Flagged Student", "FLAG001");
+
+        when(studentInternalAPI.findByRegistrationNumberIgnoreCase("FLAG001"))
+                .thenReturn(Optional.of(student));
+        when(examInternalAPI.hasFlaggedSession(studentId)).thenReturn(true);
+
+        Optional<LatestStudentResultDto> latestOpt = service.getLatestResultForStudentRegistration("FLAG001");
+        assertThat(latestOpt).isPresent();
+        LatestStudentResultDto latest = latestOpt.get();
+        assertThat(latest.reviewStatus()).isEqualTo("UNDER_REVIEW");
+        assertThat(latest.moderationStatus()).isEqualTo("FLAGGED");
+        assertThat(latest.message()).contains("under administrative review");
+    }
+
+    @Test
+    void getLatestResult_ReturnsPendingReview_WhenResultPendingReview() {
+        UUID studentId = UUID.randomUUID();
+        UUID resultId = UUID.randomUUID();
+        Student student = buildStudent(studentId, "Late Student", "LATE001");
+        ExamResult result = buildResult(resultId, student, 35, 60);
+        result.setModerationStatus(ExamResultModerationStatus.PENDING_REVIEW);
+
+        when(studentInternalAPI.findByRegistrationNumberIgnoreCase("LATE001"))
+                .thenReturn(Optional.of(student));
+        when(examResultRepository.findFirstByStudentIdOrderByGradedAtDesc(studentId))
+                .thenReturn(Optional.of(result));
+
+        Optional<LatestStudentResultDto> latestOpt = service.getLatestResultForStudentRegistration("LATE001");
+        assertThat(latestOpt).isPresent();
+        LatestStudentResultDto latest = latestOpt.get();
+        assertThat(latest.reviewStatus()).isEqualTo("PENDING_REVIEW");
+        assertThat(latest.moderationStatus()).isEqualTo("PENDING_REVIEW");
+        assertThat(latest.message()).contains("Official Slip Withheld");
     }
 
     private static Student buildStudent(UUID id, String name, String regNumber) {
@@ -147,6 +239,7 @@ class StudentResultServiceTest {
         result.setStudent(student);
         result.setTotalScore(totalScore);
         result.setMaxScore(maxScore);
+        result.setModerationStatus(ExamResultModerationStatus.ELIGIBLE);
         return result;
     }
 }

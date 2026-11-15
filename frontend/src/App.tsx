@@ -20,6 +20,8 @@ import Dashboard from './pages/student/Dashboard';
 import ExamDashboard from './pages/exam/ExamDashboard';
 import ResultPage from './pages/student/ResultPage';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { clearAllLocalExamData, resetExamState } from './store/examSlice';
+import { store } from './store/store';
 import {
   clearStoredToken,
   decodeJwtPayload,
@@ -100,9 +102,13 @@ axios.interceptors.response.use(
     if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
       const problemData = await parseErrorResponseData(error.response.data);
       if (isSessionEvictedProblem(problemData)) {
-        clearStoredToken();
         processQueue(error, null);
-        redirectToLogin('session_expired');
+        if (!store.getState().exam.isExamTerminated) {
+          await clearAllLocalExamData();
+          store.dispatch(resetExamState());
+          clearStoredToken();
+          redirectToLogin('session_expired');
+        }
         return Promise.reject(error);
       }
 
@@ -134,10 +140,14 @@ axios.interceptors.response.use(
           axios.isAxiosError(refreshError) &&
           (refreshError.response?.status === 401 || refreshError.response?.status === 403)
         ) {
-          const refreshProblem = await parseErrorResponseData(refreshError.response.data);
-          const errorCode = isSessionEvictedProblem(refreshProblem) ? 'session_expired' : 'auth_expired';
-          clearStoredToken();
-          redirectToLogin(errorCode);
+          if (!store.getState().exam.isExamTerminated) {
+            const refreshProblem = await parseErrorResponseData(refreshError.response.data);
+            const errorCode = isSessionEvictedProblem(refreshProblem) ? 'session_expired' : 'auth_expired';
+            await clearAllLocalExamData();
+            store.dispatch(resetExamState());
+            clearStoredToken();
+            redirectToLogin(errorCode);
+          }
         }
         return Promise.reject(refreshError);
       } finally {

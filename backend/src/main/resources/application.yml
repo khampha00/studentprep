@@ -6,6 +6,9 @@ spring:
   mvc:
     problem-details:
       enabled: true
+  modulith:
+    events:
+      republish-outstanding-events-on-restart: true
   servlet:
     multipart:
       max-file-size: ${SPRING_MULTIPART_MAX_FILE_SIZE:15MB}
@@ -81,3 +84,13 @@ server:
     include-message: ${SERVER_ERROR_INCLUDE_MESSAGE:never}
     include-binding-errors: ${SERVER_ERROR_INCLUDE_BINDING_ERRORS:never}
     include-stacktrace: never
+
+exam:
+  timing:
+    duration-minutes: ${EXAM_DURATION_MINUTES:120}
+    sync-grace-seconds: ${EXAM_SYNC_GRACE_SECONDS:30}
+    offline-submit-grace-seconds: ${EXAM_OFFLINE_SUBMIT_GRACE_SECONDS:900}
+  outbox:
+    recovery-interval-ms: ${EXAM_OUTBOX_RECOVERY_INTERVAL_MS:60000}
+  expiry:
+    sweep-interval-ms: ${EXAM_EXPIRY_SWEEP_INTERVAL_MS:30000}

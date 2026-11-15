@@ -1,10 +1,22 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { toast } from 'sonner';
 import type { AppDispatch, RootState } from '../../store/store';
-import { tickTimer, syncExamData, recordViolation, acknowledgeWarning, hydrateFromServer, initializeExam, fetchExamPayload, toggleFlagQuestion } from '../../store/examSlice';
+import {
+  tickTimer,
+  syncTimeWithClock,
+  syncExamData,
+  recordViolation,
+  acknowledgeWarning,
+  hydrateFromServer,
+  initializeExam,
+  fetchExamPayload,
+  toggleFlagQuestion,
+  clearAllLocalExamData,
+  resetExamState,
+} from '../../store/examSlice';
 import { CheckCircle2, AlertCircle, Flag } from 'lucide-react';
 import { cn } from '../../App';
 import { Button } from '../../components/ui/button';
@@ -14,12 +26,13 @@ import RichText from '../../components/RichText';
 import ExamTimer from '../../components/ExamTimer';
 import SubmitButton from '../../components/SubmitButton';
 import QuestionRenderer from '../../components/QuestionRenderer';
-import { isAuthRedirecting } from '../../lib/auth';
+import { isAuthRedirecting, setAuthRedirecting } from '../../lib/auth';
 
 export default function ExamDashboard() {
   const dispatch = useDispatch<AppDispatch>();
   const navigate = useNavigate();
   const exam = useSelector((state: RootState) => state.exam);
+  const autoSubmittedRef = useRef(false);
 
   useEffect(() => {
     if (!exam.questions || exam.questions.length === 0) {
@@ -52,14 +65,17 @@ export default function ExamDashboard() {
   }, [exam.isExamTerminated, dispatch]);
 
   useEffect(() => {
+    if (exam.isExamTerminated) return;
     // 5s active session heartbeat to detect concurrent login on another device
     const heartbeat = setInterval(async () => {
       try {
         await axios.get('/api/v1/exams/active/session');
-      } catch (err) {}
+      } catch {
+        // silent fail
+      }
     }, 5000);
     return () => clearInterval(heartbeat);
-  }, []);
+  }, [exam.isExamTerminated]);
 
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -84,7 +100,11 @@ export default function ExamDashboard() {
     };
 
     const onVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') handleViolation();
+      if (document.visibilityState === 'hidden') {
+        handleViolation();
+      } else if (document.visibilityState === 'visible') {
+        dispatch(syncTimeWithClock());
+      }
     };
     
     window.addEventListener('blur', handleViolation);
@@ -101,28 +121,49 @@ export default function ExamDashboard() {
     if (exam.isExamTerminated) {
       // Auto-submit the exam to the server with FLAGGED_TAB_SWITCH reason
       dispatch(syncExamData({ isFinal: true, reason: 'FLAGGED_TAB_SWITCH' }))
-        .then(() => {
-          setTimeout(() => {
-            axios.post('/api/v1/auth/logout', {}, { withCredentials: true }).catch(() => {});
+        .finally(() => {
+          setTimeout(async () => {
+            await clearAllLocalExamData();
+            dispatch(resetExamState());
+            try {
+              await axios.post('/api/v1/auth/logout', {}, { withCredentials: true });
+            } catch {
+              // ignore: session may already be evicted by FLAGGED_TAB_SWITCH listener
+            }
             localStorage.removeItem('token');
-            window.location.href = '/?terminated=malpractice';
-          }, 3000);
-        })
-        .catch(() => {
-          setTimeout(() => {
-            axios.post('/api/v1/auth/logout', {}, { withCredentials: true }).catch(() => {});
-            localStorage.removeItem('token');
+            setAuthRedirecting(true);
             window.location.href = '/?terminated=malpractice';
           }, 3000);
         });
     }
   }, [exam.isExamTerminated, dispatch]);
 
+  // One-shot auto-submit when timer reaches 0
   useEffect(() => {
+    if (exam.timeLeft <= 0 && !exam.isExamTerminated && !autoSubmittedRef.current && exam.sessionId) {
+      autoSubmittedRef.current = true;
+      dispatch(syncExamData({ isFinal: true, reason: 'TIME_EXPIRED' }))
+        .unwrap()
+        .then((outcome) => {
+          if (outcome?.finalConfirmed) {
+            toast.info('Time Expired: Exam submitted automatically.');
+            navigate('/result');
+          } else if (outcome?.offlineQueued) {
+            toast.info('Time Expired: Submission Queued Offline', {
+              description: 'Your final answers have been recorded locally and will submit once internet connectivity is restored.',
+            });
+          }
+        })
+        .catch(() => {});
+    }
+  }, [exam.timeLeft, exam.isExamTerminated, exam.sessionId, dispatch, navigate]);
+
+  useEffect(() => {
+    if (exam.isExamTerminated) return;
     const timer = setInterval(() => { dispatch(tickTimer()); }, 1000);
     const syncer = setInterval(() => { dispatch(syncExamData()); }, 30000);
     return () => { clearInterval(timer); clearInterval(syncer); };
-  }, [dispatch]);
+  }, [dispatch, exam.isExamTerminated]);
 
   useEffect(() => {
     const handleOnline = () => {
@@ -298,7 +339,7 @@ export default function ExamDashboard() {
               <div className="p-4 lg:p-6 overflow-y-auto max-h-[60vh] flex-1">
                 <div className="text-slate-800 text-lg leading-relaxed mb-8">
                   {currentQ?.content?.assets && currentQ.content.assets.map((asset: any, i: number) => (
-                    asset.type === 'IMAGE' && <img key={i} src={asset.url} alt={asset.alt} className="mb-4 max-w-md" />
+                    asset?.type?.toLowerCase() === 'image' && <img key={i} src={asset.url} alt={asset.alt || 'Question diagram'} className="mb-4 max-w-md rounded" />
                   ))}
                   <RichText text={currentQ?.content?.text || ''} />
                 </div>

@@ -1,9 +1,12 @@
 import { useState, useEffect, type FormEvent } from 'react';
 import axios from 'axios';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useDispatch } from 'react-redux';
 import { toast } from 'sonner';
 import { Button } from '../../components/ui/button';
 import { Label } from '../../components/ui/label';
+import { clearAllLocalExamData, resetExamState } from '../../store/examSlice';
+import { db } from '../../store/db';
 import {
   clearStoredToken,
   decodeJwtPayload,
@@ -18,6 +21,7 @@ function RequiredAsterisk() {
 }
 
 export default function Login() {
+  const dispatch = useDispatch();
   const [identifier, setIdentifier] = useState('');
   const [pin, setPin] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -77,6 +81,18 @@ export default function Login() {
       setStoredToken(token);
 
       const payload = decodeJwtPayload(token);
+      const incomingSub = payload?.sub;
+      if (incomingSub) {
+        const localStates = await db.examStates.toArray();
+        const hasDifferentOwner = localStates.some(
+          (s) => s.ownerIdentifier && s.ownerIdentifier !== incomingSub
+        );
+        if (hasDifferentOwner) {
+          await clearAllLocalExamData();
+          dispatch(resetExamState());
+        }
+      }
+
       if (payload?.role === 'ROLE_ADMIN' || payload?.role === 'ROLE_SUPERVISOR') {
         navigate('/admin');
       } else {

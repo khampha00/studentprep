@@ -80,7 +80,10 @@ public class SecurityConfig {
                         .hasRole("ADMIN")
                         .requestMatchers(
                                 HttpMethod.POST,
-                                "/api/v1/admin/students/credentials/pdf")
+                                "/api/v1/admin/students/credentials/pdf",
+                                "/api/v1/admin/exams/sessions/*/clear-late",
+                                "/api/v1/admin/exams/sessions/*/void",
+                                "/api/v1/admin/students/*/grant-retake")
                         .hasRole("ADMIN")
                         .requestMatchers(
                                 HttpMethod.GET,

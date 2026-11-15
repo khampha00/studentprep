@@ -9,4 +9,20 @@ public interface ExamInternalAPI {
     boolean hasActiveSession(UUID studentId);
     List<Map<String, Object>> getLiveSessions();
     long countCompletedExamsBySessionId(UUID examId);
+    List<Map<String, Object>> getFlaggedOrLateSessions();
+
+    void clearLateSession(UUID sessionId, String actor);
+    default void clearLateSession(UUID sessionId) {
+        clearLateSession(sessionId, "ADMIN");
+    }
+
+    void voidSession(UUID sessionId, String actor);
+    default void voidSession(UUID sessionId) {
+        voidSession(sessionId, "ADMIN");
+    }
+
+    void grantRetake(UUID studentId, String actor);
+    default void grantRetake(UUID studentId) {
+        grantRetake(studentId, "ADMIN");
+    }
 }

@@ -144,4 +144,37 @@ class UserSyncListenerAndUserDetailsServiceTest {
         assertEquals("ROLE_ADMIN", adminDetails.getRole());
         verify(userRepository).findByIdentifierIgnoreCase("admin-001");
     }
+
+    @Test
+    void userSyncListener_RemovesConflictingOrphanUserRowBeforePinResetSave() {
+        UserSyncListener listener = new UserSyncListener(userRepository, redisTemplate);
+        UUID studentId = UUID.randomUUID();
+        UUID orphanUserId = UUID.randomUUID();
+
+        User canonicalUser = new User();
+        canonicalUser.setId(studentId);
+        canonicalUser.setIdentifier("JAMB-2026-OLD");
+        canonicalUser.setPinHash("$argon2id$old");
+        canonicalUser.setRole("ROLE_STUDENT");
+        canonicalUser.setPinResetRequired(false);
+
+        User orphanConflict = new User();
+        orphanConflict.setId(orphanUserId);
+        orphanConflict.setIdentifier("775132TU");
+        orphanConflict.setPinHash("$argon2id$orphan");
+        orphanConflict.setRole("ROLE_STUDENT");
+        orphanConflict.setPinResetRequired(true);
+
+        when(userRepository.findByIdentifierIgnoreCase("775132TU")).thenReturn(Optional.of(orphanConflict));
+        when(userRepository.findById(studentId)).thenReturn(Optional.of(canonicalUser));
+
+        listener.onStudentPinReset(new StudentPinResetEvent(studentId, "775132TU", "$argon2id$new", false));
+
+        verify(userRepository).delete(orphanConflict);
+        verify(userRepository).flush();
+        verify(userRepository).save(canonicalUser);
+        assertEquals("775132TU", canonicalUser.getIdentifier());
+        assertEquals("$argon2id$new", canonicalUser.getPinHash());
+        assertFalse(canonicalUser.isPinResetRequired());
+    }
 }

@@ -1,11 +1,14 @@
 package com.studentprep.analytics;
 
+import com.studentprep.exam.ExamInternalAPI;
 import com.studentprep.student.Student;
 import com.studentprep.student.StudentInternalAPI;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -24,16 +27,28 @@ public class StudentResultService {
     private final StudentInternalAPI studentInternalAPI;
     private final ExamResultSummaryService examResultSummaryService;
     private final ExamResultSlipGenerator examResultSlipGenerator;
+    private final ExamInternalAPI examInternalAPI;
 
     public StudentResultService(
             ExamResultRepository examResultRepository,
             StudentInternalAPI studentInternalAPI,
             ExamResultSummaryService examResultSummaryService,
             ExamResultSlipGenerator examResultSlipGenerator) {
+        this(examResultRepository, studentInternalAPI, examResultSummaryService, examResultSlipGenerator, null);
+    }
+
+    @Autowired
+    public StudentResultService(
+            ExamResultRepository examResultRepository,
+            StudentInternalAPI studentInternalAPI,
+            ExamResultSummaryService examResultSummaryService,
+            ExamResultSlipGenerator examResultSlipGenerator,
+            ExamInternalAPI examInternalAPI) {
         this.examResultRepository = examResultRepository;
         this.studentInternalAPI = studentInternalAPI;
         this.examResultSummaryService = examResultSummaryService;
         this.examResultSlipGenerator = examResultSlipGenerator;
+        this.examInternalAPI = examInternalAPI;
     }
 
     /**
@@ -45,11 +60,33 @@ public class StudentResultService {
     }
 
     /**
-     * Returns the most recent graded exam result for the candidate identified by {@code registrationNumber}.
+     * Returns the most recent graded exam result or review status for the candidate identified by {@code registrationNumber}.
      */
     public Optional<LatestStudentResultDto> getLatestResultForStudentRegistration(String registrationNumber) {
         Student student = requireStudentByRegistration(registrationNumber);
+
+        // Check if candidate has an active FLAGGED_TAB_SWITCH session under review
+        if (examInternalAPI != null && examInternalAPI.hasFlaggedSession(student.getId())) {
+            return Optional.of(new LatestStudentResultDto(
+                    null,
+                    student.getName(),
+                    student.getRegistrationNumber(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    Collections.emptyMap(),
+                    Collections.emptyMap(),
+                    "",
+                    null,
+                    "FLAGGED",
+                    "UNDER_REVIEW",
+                    "Your examination attempt is under administrative review."
+            ));
+        }
+
         return examResultRepository.findFirstByStudentIdOrderByGradedAtDesc(student.getId())
+                .filter(result -> result.getModerationStatus() != ExamResultModerationStatus.VOIDED)
                 .map(result -> toLatestResultDto(result, student));
     }
 
@@ -58,6 +95,7 @@ public class StudentResultService {
      */
     public List<StudentResultDto> getResultsForStudent(UUID studentId) {
         return examResultRepository.findByStudentIdOrderByGradedAtDesc(studentId).stream()
+                .filter(result -> result.getModerationStatus() != ExamResultModerationStatus.VOIDED)
                 .map(this::toResultDto)
                 .toList();
     }
@@ -67,11 +105,15 @@ public class StudentResultService {
      */
     public GeneratedResultSlip generateStudentResultSlip(String registrationNumber, UUID resultId) {
         Student student = requireStudentByRegistration(registrationNumber);
+        assertStudentNotFlagged(student.getId());
+
         ExamResult result = requireResult(resultId, "Result not found");
 
         if (result.getStudent() == null || !result.getStudent().getId().equals(student.getId())) {
             throw new AccessDeniedException("Access denied to this result slip");
         }
+
+        assertSlipEligible(result);
 
         return renderSlip(result, student, result.getId());
     }
@@ -81,8 +123,12 @@ public class StudentResultService {
      */
     public GeneratedResultSlip generateLatestStudentResultSlip(String registrationNumber) {
         Student student = requireStudentByRegistration(registrationNumber);
+        assertStudentNotFlagged(student.getId());
+
         ExamResult latestResult = examResultRepository.findFirstByStudentIdOrderByGradedAtDesc(student.getId())
                 .orElseThrow(() -> new NoSuchElementException("No exam results found for candidate"));
+
+        assertSlipEligible(latestResult);
 
         return renderSlip(latestResult, student, latestResult.getId());
     }
@@ -92,6 +138,7 @@ public class StudentResultService {
      */
     public GeneratedResultSlip generateAdminResultSlip(UUID resultId) {
         ExamResult result = requireResult(resultId, "Exam result not found");
+        assertSlipEligible(result);
         return renderSlip(result, result.getStudent(), resultId);
     }
 
@@ -103,7 +150,21 @@ public class StudentResultService {
         if (result.getStudent() == null || !result.getStudent().getId().equals(studentId)) {
             throw new NoSuchElementException("Exam result not found for candidate");
         }
+        assertSlipEligible(result);
         return renderSlip(result, result.getStudent(), resultId);
+    }
+
+    private void assertStudentNotFlagged(UUID studentId) {
+        if (examInternalAPI != null && examInternalAPI.hasFlaggedSession(studentId)) {
+            throw new AccessDeniedException("Examination under administrative review - result slip withheld");
+        }
+    }
+
+    private void assertSlipEligible(ExamResult result) {
+        if (result.getModerationStatus() != ExamResultModerationStatus.ELIGIBLE
+                && result.getModerationStatus() != ExamResultModerationStatus.CLEARED) {
+            throw new AccessDeniedException("Result slip is withheld pending administrative review");
+        }
     }
 
     static String buildResultSlipFilename(Student student, UUID fallbackId) {
@@ -133,6 +194,7 @@ public class StudentResultService {
 
     private StudentResultDto toResultDto(ExamResult result) {
         Student student = result.getStudent();
+        String modStatus = result.getModerationStatus() != null ? result.getModerationStatus().name() : "ELIGIBLE";
         return new StudentResultDto(
                 result.getId(),
                 student != null ? student.getName() : null,
@@ -142,14 +204,22 @@ public class StudentResultService {
                 result.getTopicBreakdown(),
                 examResultSummaryService.computeSubjectScores(result),
                 formatGradedAt(result),
-                result.getExamSessionId());
+                result.getExamSessionId(),
+                modStatus);
     }
 
     private LatestStudentResultDto toLatestResultDto(ExamResult result, Student student) {
+        String modStatus = result.getModerationStatus() != null ? result.getModerationStatus().name() : "ELIGIBLE";
+        String reviewStatus = null;
+        String message = null;
+        if (result.getModerationStatus() == ExamResultModerationStatus.PENDING_REVIEW) {
+            reviewStatus = "PENDING_REVIEW";
+            message = "Submission Pending Review — Official Slip Withheld";
+        }
         return new LatestStudentResultDto(
                 result.getId(),
-                student.getName(),
-                student.getRegistrationNumber(),
+                student != null ? student.getName() : null,
+                student != null ? student.getRegistrationNumber() : null,
                 result.getTotalScore(),
                 result.getMaxScore(),
                 result.getTotalScore(),
@@ -157,7 +227,10 @@ public class StudentResultService {
                 result.getTopicBreakdown(),
                 examResultSummaryService.computeSubjectScores(result),
                 formatGradedAt(result),
-                result.getExamSessionId());
+                result.getExamSessionId(),
+                modStatus,
+                reviewStatus,
+                message);
     }
 
     private static String formatGradedAt(ExamResult result) {
@@ -181,7 +254,21 @@ public class StudentResultService {
             Map<String, TopicStats> topicBreakdown,
             Map<String, int[]> subjectScores,
             String gradedAt,
-            UUID examSessionId) {
+            UUID examSessionId,
+            String moderationStatus) {
+
+        public StudentResultDto(
+                UUID id,
+                String studentName,
+                String registrationNumber,
+                Integer totalScore,
+                Integer maxScore,
+                Map<String, TopicStats> topicBreakdown,
+                Map<String, int[]> subjectScores,
+                String gradedAt,
+                UUID examSessionId) {
+            this(id, studentName, registrationNumber, totalScore, maxScore, topicBreakdown, subjectScores, gradedAt, examSessionId, "ELIGIBLE");
+        }
     }
 
     public record LatestStudentResultDto(
@@ -195,7 +282,25 @@ public class StudentResultService {
             Map<String, TopicStats> topicBreakdown,
             Map<String, int[]> subjectScores,
             String gradedAt,
-            UUID examSessionId) {
+            UUID examSessionId,
+            String moderationStatus,
+            String reviewStatus,
+            String message) {
+
+        public LatestStudentResultDto(
+                UUID id,
+                String studentName,
+                String registrationNumber,
+                Integer score,
+                Integer total,
+                Integer totalScore,
+                Integer maxScore,
+                Map<String, TopicStats> topicBreakdown,
+                Map<String, int[]> subjectScores,
+                String gradedAt,
+                UUID examSessionId) {
+            this(id, studentName, registrationNumber, score, total, totalScore, maxScore, topicBreakdown, subjectScores, gradedAt, examSessionId, "ELIGIBLE", null, null);
+        }
     }
 
     public record GeneratedResultSlip(byte[] content, String filename) {
