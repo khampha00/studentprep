@@ -16,6 +16,7 @@ import {
 import { toast } from 'sonner';
 import { Link } from 'react-router-dom';
 import { Trash2, Edit2 } from 'lucide-react';
+import { extractProblemMessage } from '../../lib/auth';
 
 export default function SubjectList() {
   const [subjects, setSubjects] = useState<any[]>([]);
@@ -23,6 +24,8 @@ export default function SubjectList() {
   const [isCreatingSubject, setIsCreatingSubject] = useState(false);
   const [editingSubject, setEditingSubject] = useState<string | null>(null);
   const [editSubjectName, setEditSubjectName] = useState('');
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const [deletingSubjectId, setDeletingSubjectId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchSubjects();
@@ -56,16 +59,16 @@ export default function SubjectList() {
 
   const handleDeleteSubject = async (id: string, e: React.MouseEvent) => {
     e.preventDefault();
+    setDeletingSubjectId(id);
     try {
       await axios.delete(`/api/v1/admin/subjects/${id}`);
       toast.success('Subject deleted successfully');
       await fetchSubjects();
-    } catch (error: any) {
-      if (error.response?.status === 400) {
-        toast.error('Cannot delete: Subject has active questions');
-      } else {
-        toast.error('Failed to delete subject');
-      }
+    } catch (error: unknown) {
+      toast.error(extractProblemMessage(error, 'Failed to delete subject'));
+    } finally {
+      setDeletingSubjectId(null);
+      setDeleteTargetId(null);
     }
   };
 
@@ -148,17 +151,21 @@ export default function SubjectList() {
                 >
                   <Edit2 className="w-4 h-4 mr-2" /> Edit
                 </Button>
-                <AlertDialog>
-                  <AlertDialogTrigger>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-destructive hover:bg-destructive/10"
-                      onClick={(e) => e.preventDefault()}
-                    >
-                      <Trash2 className="w-4 h-4 mr-2" /> Delete
-                    </Button>
-                  </AlertDialogTrigger>
+                <AlertDialog
+                  open={deleteTargetId === s.id}
+                  onOpenChange={(open) => setDeleteTargetId(open ? s.id : null)}
+                >
+                  <AlertDialogTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:bg-destructive/10"
+                      >
+                        <Trash2 className="w-4 h-4 mr-2" /> Delete
+                      </Button>
+                    }
+                  />
                   <AlertDialogContent onClick={(e) => e.stopPropagation()}>
                     <AlertDialogHeader>
                       <AlertDialogTitle>Delete Subject</AlertDialogTitle>
@@ -168,12 +175,13 @@ export default function SubjectList() {
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogCancel disabled={deletingSubjectId === s.id}>Cancel</AlertDialogCancel>
                       <AlertDialogAction
+                        disabled={deletingSubjectId === s.id}
                         className="bg-destructive text-white hover:bg-destructive/90"
                         onClick={(e) => handleDeleteSubject(s.id, e)}
                       >
-                        Delete
+                        {deletingSubjectId === s.id ? 'Deleting...' : 'Delete'}
                       </AlertDialogAction>
                     </AlertDialogFooter>
                   </AlertDialogContent>

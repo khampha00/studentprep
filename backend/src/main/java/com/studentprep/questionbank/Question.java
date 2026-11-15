@@ -10,11 +10,16 @@ import lombok.Setter;
 import org.hibernate.annotations.Type;
 
 import java.util.Map;
+import java.util.UUID;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.FetchType;
+import jakarta.persistence.Transient;
 
 @Getter
 @Setter
@@ -30,36 +35,39 @@ public class Question extends BaseEntity {
     @JoinColumn(name = "context_id")
     private QuestionContext context;
 
-    @jakarta.persistence.Transient
-    private java.util.UUID transientSubjectId;
+    @Column(name = "ingestion_job_id")
+    private UUID ingestionJobId;
 
-    @jakarta.persistence.Transient
-    private java.util.UUID transientContextId;
+    @Transient
+    private UUID transientSubjectId;
 
-    @com.fasterxml.jackson.annotation.JsonProperty("subjectId")
-    public java.util.UUID getSubjectId() {
+    @Transient
+    private UUID transientContextId;
+
+    @JsonProperty("subjectId")
+    public UUID getSubjectId() {
         if (subject != null) return subject.getId();
         return transientSubjectId;
     }
 
-    @com.fasterxml.jackson.annotation.JsonProperty("subjectId")
-    public void setSubjectId(java.util.UUID subjectId) {
+    @JsonProperty("subjectId")
+    public void setSubjectId(UUID subjectId) {
         this.transientSubjectId = subjectId;
     }
 
-    @com.fasterxml.jackson.annotation.JsonProperty("contextId")
-    public java.util.UUID getContextId() {
+    @JsonProperty("contextId")
+    public UUID getContextId() {
         if (context != null) return context.getId();
         return transientContextId;
     }
 
-    @com.fasterxml.jackson.annotation.JsonProperty("contextId")
-    public void setContextId(java.util.UUID contextId) {
+    @JsonProperty("contextId")
+    public void setContextId(UUID contextId) {
         this.transientContextId = contextId;
     }
 
     private String topic;
-    @jakarta.persistence.Enumerated(jakarta.persistence.EnumType.STRING)
+    @Enumerated(EnumType.STRING)
     private QuestionStatus status;
 
     @Type(JsonType.class)

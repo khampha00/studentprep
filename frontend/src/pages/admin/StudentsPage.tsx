@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, type FormEvent } from 'react';
+import { useState, useEffect, useCallback, useMemo, type FormEvent } from 'react';
 import axios from 'axios';
 import { toast } from 'sonner';
 import {
@@ -14,6 +14,12 @@ import {
 import StudentDetailModal from '../../components/StudentDetailModal';
 import OneTimePinSlip from '../../components/OneTimePinSlip';
 import { Button } from '../../components/ui/button';
+import {
+  DataTable,
+  type DataTableColumn,
+  type DataTableFilterConfig,
+  type DataTableServerQuery,
+} from '../../components/ui/data-table';
 import { Label } from '../../components/ui/label';
 import {
   AlertDialog,
@@ -52,12 +58,22 @@ function triggerBlobDownload(data: BlobPart, mimeType: string, filename: string)
   window.URL.revokeObjectURL(url);
 }
 
+const STUDENTS_PAGE_SIZE = 50;
+
 export default function StudentsPage() {
   const isAdmin = isAdminRole();
   const [students, setStudents] = useState<StudentSummary[]>([]);
   const [meta, setMeta] = useState<PageMeta | null>(null);
-  const [page, setPage] = useState(0);
+  const [query, setQuery] = useState<DataTableServerQuery>({
+    page: 0,
+    pageSize: STUDENTS_PAGE_SIZE,
+    search: '',
+    filters: {},
+    sortKey: null,
+    sortDirection: 'asc',
+  });
   const [loading, setLoading] = useState(true);
+  const [isFetchingPage, setIsFetchingPage] = useState(false);
   const [availableSubjects, setAvailableSubjects] = useState<SubjectOption[]>([]);
 
   const [showBulkModal, setShowBulkModal] = useState(false);
@@ -78,43 +94,77 @@ export default function StudentsPage() {
   const [downloadingBatchPdf, setDownloadingBatchPdf] = useState(false);
   const [downloadingSlipId, setDownloadingSlipId] = useState<string | null>(null);
 
-  const refreshStudents = useCallback(async (targetPage = page) => {
+  const buildStudentsUrl = useCallback((q: DataTableServerQuery) => {
+    const params = new URLSearchParams({
+      page: String(q.page),
+      size: String(q.pageSize),
+    });
+    if (q.search.trim()) {
+      params.set('search', q.search.trim());
+    }
+    const credentialFilter = q.filters.credentialStatus;
+    if (credentialFilter && credentialFilter !== 'ALL') {
+      params.set('credentialStatus', credentialFilter);
+    }
+    if (q.sortKey) {
+      params.set('sortBy', q.sortKey);
+      params.set('sortDir', q.sortDirection);
+    }
+    return `/api/v1/admin/students?${params.toString()}`;
+  }, []);
+
+  const refreshStudents = useCallback(async (targetQuery: DataTableServerQuery = query) => {
+    setIsFetchingPage(true);
     try {
-      const res = await axios.get(`/api/v1/admin/students?page=${targetPage}&size=50`);
+      const res = await axios.get(buildStudentsUrl(targetQuery));
       setStudents((res.data?.data as StudentSummary[]) || []);
       setMeta((res.data?.meta as PageMeta) || null);
     } catch (error: unknown) {
       toast.error(extractProblemMessage(error, 'Failed to load students'));
+    } finally {
+      setIsFetchingPage(false);
     }
-  }, [page]);
+  }, [buildStudentsUrl, query]);
 
   useEffect(() => {
     let active = true;
-    const loadInitial = async () => {
-      try {
-        const [studentsRes, subjectsRes] = await Promise.all([
-          axios.get(`/api/v1/admin/students?page=${page}&size=50`),
-          axios.get('/api/v1/admin/subjects'),
-        ]);
-        if (!active) return;
-        setStudents((studentsRes.data?.data as StudentSummary[]) || []);
-        setMeta((studentsRes.data?.meta as PageMeta) || null);
-        setAvailableSubjects((subjectsRes.data?.data as SubjectOption[]) || []);
-      } catch (error: unknown) {
+    axios
+      .get('/api/v1/admin/subjects')
+      .then((subjectsRes) => {
         if (active) {
-          toast.error(extractProblemMessage(error, 'Failed to load students'));
+          setAvailableSubjects((subjectsRes.data?.data as SubjectOption[]) || []);
         }
-      } finally {
-        if (active) {
-          setLoading(false);
-        }
-      }
-    };
-    void loadInitial();
+      })
+      .catch(() => {});
     return () => {
       active = false;
     };
-  }, [page]);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    axios
+      .get(buildStudentsUrl(query))
+      .then((studentsRes) => {
+        if (!active) return;
+        setStudents((studentsRes.data?.data as StudentSummary[]) || []);
+        setMeta((studentsRes.data?.meta as PageMeta) || null);
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          toast.error(extractProblemMessage(error, 'Failed to load students'));
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setLoading(false);
+          setIsFetchingPage(false);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [buildStudentsUrl, query]);
 
   const handleBulkUpload = async (e: FormEvent) => {
     e.preventDefault();
@@ -131,8 +181,11 @@ export default function StudentsPage() {
       setBulkResult(response.data?.data as BulkImportResponse);
       toast.success('Bulk registration completed');
       setFile(null);
-      await refreshStudents(0);
-      setPage(0);
+      if (query.page !== 0) {
+        setQuery((prev) => ({ ...prev, page: 0 }));
+      } else {
+        await refreshStudents(query);
+      }
     } catch (error: unknown) {
       toast.error(extractProblemMessage(error, 'Failed to upload CSV file'));
     } finally {
@@ -155,8 +208,11 @@ export default function StudentsPage() {
       const created = response.data?.data as CreatedStudentResponse;
       setCreatedStudent(created);
       toast.success('Student registered. One-time PIN issued!');
-      await refreshStudents(0);
-      setPage(0);
+      if (query.page !== 0) {
+        setQuery((prev) => ({ ...prev, page: 0 }));
+      } else {
+        await refreshStudents(query);
+      }
     } catch (error: unknown) {
       toast.error(extractProblemMessage(error, 'Failed to register student'));
     } finally {
@@ -326,6 +382,149 @@ export default function StudentsPage() {
     );
   };
 
+  const studentFilters: DataTableFilterConfig<StudentSummary>[] = useMemo(
+    () => [
+      {
+        key: 'credentialStatus',
+        label: 'Credentials',
+        options: [
+          { value: 'RESET_REQUIRED', label: 'Reset Required' },
+          { value: 'HASHED', label: 'Hashed' },
+        ],
+      },
+    ],
+    []
+  );
+
+  const studentColumns: DataTableColumn<StudentSummary>[] = [
+    {
+      key: 'name',
+      header: 'Candidate Name',
+      sortable: true,
+      sortType: 'text',
+      render: (student) => <span className="text-slate-900 font-medium">{student.name}</span>,
+    },
+    {
+      key: 'registrationNumber',
+      header: 'Registration Number',
+      sortable: true,
+      sortType: 'text',
+      render: (student) => (
+        <span className="text-slate-900 font-mono font-bold text-xs">
+          {student.registrationNumber}
+        </span>
+      ),
+    },
+    {
+      key: 'pinResetRequired',
+      header: 'Credential Status',
+      sortable: true,
+      sortType: 'text',
+      render: (student) =>
+        student.pinResetRequired ? (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-50 text-amber-900 border border-amber-300 rounded font-semibold text-xs">
+            <AlertTriangle className="w-3 h-3 text-amber-700" />
+            Reset Required
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 text-emerald-900 border border-emerald-200 rounded font-semibold text-xs">
+            <ShieldCheck className="w-3 h-3 text-[#008751]" />
+            Hashed
+          </span>
+        ),
+    },
+    {
+      key: 'sessionStatus',
+      header: 'Session Status',
+      render: (student) =>
+        student.hasActiveSession ? (
+          <span className="inline-flex items-center px-2.5 py-1 bg-blue-50 text-blue-900 border border-blue-200 rounded font-semibold text-xs">
+            Active Session
+          </span>
+        ) : (
+          <span className="inline-flex items-center px-2.5 py-1 bg-slate-100 text-slate-700 border border-slate-200 rounded font-medium text-xs">
+            Offline
+          </span>
+        ),
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      align: 'right',
+      hideLabelOnMobile: true,
+      render: (student) => (
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setSelectedStudentId(student.id)}
+            className="inline-flex items-center gap-1.5 px-3 py-1 bg-slate-50 border border-slate-300 text-slate-900 hover:bg-slate-100 rounded-md text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+            title="View student profile and exam history"
+          >
+            <Eye className="w-3.5 h-3.5" />
+            View Profile
+          </button>
+
+          {isAdmin && student.hasActiveSession && (
+            <button
+              type="button"
+              onClick={() => setUnlockTarget(student)}
+              disabled={unlockingId === student.id}
+              className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-50 border border-amber-300 text-amber-900 hover:bg-amber-100 rounded-md text-xs font-semibold shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+              title="Evict active workstation lock and allow one-time re-login"
+            >
+              <Unlock className="w-3.5 h-3.5" />
+              {unlockingId === student.id ? 'Unlocking...' : 'Unlock Session'}
+            </button>
+          )}
+
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => handleDownloadSlip(student)}
+              disabled={downloadingSlipId === student.id}
+              className="inline-flex items-center gap-1.5 px-3 py-1 bg-slate-50 border border-[#008751]/40 text-[#008751] hover:bg-emerald-50 rounded-md text-xs font-semibold shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+              title="Download credential slip PDF with active PIN"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              Slip
+            </button>
+          )}
+        </div>
+      ),
+    },
+  ];
+
+  const bulkCredentialColumns: DataTableColumn<{
+    name: string;
+    registrationNumber: string;
+    oneTimePin: string;
+  }>[] = [
+    {
+      key: 'name',
+      header: 'Candidate Name',
+      sortable: true,
+      sortType: 'text',
+      sortValue: (c) => c.name,
+      searchValue: (c) => c.name,
+      render: (c) => <span className="font-medium text-slate-900 text-xs">{c.name}</span>,
+    },
+    {
+      key: 'registrationNumber',
+      header: 'Registration Number',
+      sortable: true,
+      sortType: 'text',
+      sortValue: (c) => c.registrationNumber,
+      searchValue: (c) => c.registrationNumber,
+      render: (c) => <span className="font-mono font-bold text-slate-900 text-xs">{c.registrationNumber}</span>,
+    },
+    {
+      key: 'oneTimePin',
+      header: 'One-Time PIN',
+      searchValue: (c) => c.oneTimePin,
+      render: (c) => <span className="font-mono font-bold text-[#008751] text-xs">{c.oneTimePin}</span>,
+    },
+  ];
+
   return (
     <div className="p-6 md:p-8 space-y-6 bg-slate-50 min-h-full font-sans text-slate-900">
       <div className="flex flex-wrap justify-between items-center gap-4">
@@ -345,7 +544,7 @@ export default function StudentsPage() {
 
         {isAdmin && (
           <div className="flex flex-wrap items-center gap-2.5">
-            {students.length > 0 && (
+            {(students.length > 0 || (meta?.totalElements ?? 0) > 0) && (
               <>
                 <Button
                   type="button"
@@ -391,135 +590,35 @@ export default function StudentsPage() {
         )}
       </div>
 
-      {loading ? (
-        <div className="text-slate-600">Loading students...</div>
-      ) : (
-        <div className="overflow-x-auto border border-slate-200 rounded-lg bg-zinc-50 shadow-xs">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-100 border-b border-slate-200 text-xs font-semibold text-slate-700">
-                <th className="p-4">Candidate Name</th>
-                <th className="p-4">Registration Number</th>
-                <th className="p-4">Credential Status</th>
-                <th className="p-4">Session Status</th>
-                <th className="p-4 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {students.map((student) => (
-                <tr
-                  key={student.id}
-                  className="border-b border-slate-200 hover:bg-slate-50 transition-colors"
-                >
-                  <td className="p-4 text-slate-900 font-medium">{student.name}</td>
-                  <td className="p-4 text-slate-900 font-mono font-bold text-xs">
-                    {student.registrationNumber}
-                  </td>
-                  <td className="p-4">
-                    {student.pinResetRequired ? (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-50 text-amber-900 border border-amber-300 rounded font-semibold text-xs">
-                        <AlertTriangle className="w-3 h-3 text-amber-700" />
-                        Reset Required
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 text-emerald-900 border border-emerald-200 rounded font-semibold text-xs">
-                        <ShieldCheck className="w-3 h-3 text-[#008751]" />
-                        Hashed
-                      </span>
-                    )}
-                  </td>
-                  <td className="p-4">
-                    {student.hasActiveSession ? (
-                      <span className="inline-flex items-center px-2.5 py-1 bg-blue-50 text-blue-900 border border-blue-200 rounded font-semibold text-xs">
-                        Active Session
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center px-2.5 py-1 bg-slate-100 text-slate-700 border border-slate-200 rounded font-medium text-xs">
-                        Offline
-                      </span>
-                    )}
-                  </td>
-                  <td className="p-4 text-right">
-                    <div className="flex justify-end gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedStudentId(student.id)}
-                        className="inline-flex items-center gap-1.5 px-3 py-1 bg-slate-50 border border-slate-300 text-slate-900 hover:bg-slate-100 rounded-md text-xs font-semibold shadow-xs transition-colors cursor-pointer"
-                        title="View student profile and exam history"
-                      >
-                        <Eye className="w-3.5 h-3.5" />
-                        View Profile
-                      </button>
-
-                      {isAdmin && student.hasActiveSession && (
-                        <button
-                          type="button"
-                          onClick={() => setUnlockTarget(student)}
-                          disabled={unlockingId === student.id}
-                          className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-50 border border-amber-300 text-amber-900 hover:bg-amber-100 rounded-md text-xs font-semibold shadow-xs transition-colors cursor-pointer disabled:opacity-50"
-                          title="Evict active workstation lock and allow one-time re-login"
-                        >
-                          <Unlock className="w-3.5 h-3.5" />
-                          {unlockingId === student.id ? 'Unlocking...' : 'Unlock Session'}
-                        </button>
-                      )}
-
-                      {isAdmin && (
-                        <button
-                          type="button"
-                          onClick={() => handleDownloadSlip(student)}
-                          disabled={downloadingSlipId === student.id}
-                          className="inline-flex items-center gap-1.5 px-3 py-1 bg-slate-50 border border-[#008751]/40 text-[#008751] hover:bg-emerald-50 rounded-md text-xs font-semibold shadow-xs transition-colors cursor-pointer disabled:opacity-50"
-                          title="Download credential slip PDF with active PIN"
-                        >
-                          <FileText className="w-3.5 h-3.5" />
-                          Slip
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {students.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="p-8 text-center text-slate-600 text-sm">
-                    No students registered yet.
-                    {isAdmin && ' Click "Register Student" or "Bulk Register CSV" to enroll candidates.'}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-
-          {meta && meta.totalPages > 1 && (
-            <div className="flex items-center justify-between px-4 py-3 border-t border-slate-200 bg-slate-50 text-xs text-slate-700">
-              <span>
-                Page {meta.page + 1} of {meta.totalPages} ({meta.totalElements} students)
-              </span>
-              <div className="flex gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={page <= 0}
-                  onClick={() => setPage((p) => Math.max(0, p - 1))}
-                >
-                  Previous
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={page + 1 >= meta.totalPages}
-                  onClick={() => setPage((p) => p + 1)}
-                >
-                  Next
-                </Button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+      <DataTable
+        caption="Registered Students"
+        data={students}
+        columns={studentColumns}
+        getRowKey={(student) => student.id}
+        mode="server"
+        loading={loading || isFetchingPage}
+        loadingMessage="Loading students..."
+        emptyMessage={
+          isAdmin
+            ? 'No students registered yet. Click "Register Student" or "Bulk Register CSV" to enroll candidates.'
+            : 'No students registered yet.'
+        }
+        itemLabel={['student', 'students']}
+        searchPlaceholder="Search candidate name or reg number..."
+        filters={studentFilters}
+        page={meta?.page ?? query.page}
+        pageSize={query.pageSize}
+        totalElements={meta?.totalElements ?? students.length}
+        totalPages={meta ? Math.max(1, meta.totalPages) : 1}
+        search={query.search}
+        filterValues={query.filters}
+        sortKey={query.sortKey}
+        sortDirection={query.sortDirection}
+        onQueryChange={(nextQuery) => {
+          setIsFetchingPage(true);
+          setQuery(nextQuery);
+        }}
+      />
 
       {showCreateModal && isAdmin && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -734,33 +833,18 @@ export default function StudentsPage() {
 
                 {bulkResult.credentials && bulkResult.credentials.length > 0 && (
                   <>
-                    <div className="overflow-x-auto border border-slate-200 rounded-lg bg-zinc-50">
-                      <table className="w-full text-left border-collapse text-xs">
-                        <thead>
-                          <tr className="bg-slate-100 border-b border-slate-200 font-semibold text-slate-700">
-                            <th className="p-3">Candidate Name</th>
-                            <th className="p-3">Registration Number</th>
-                            <th className="p-3">One-Time PIN</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {bulkResult.credentials.map((cred) => (
-                            <tr
-                              key={`${cred.registrationNumber}-${cred.oneTimePin}`}
-                              className="border-b border-slate-200"
-                            >
-                              <td className="p-3 font-medium text-slate-900">{cred.name}</td>
-                              <td className="p-3 font-mono font-bold text-slate-900">
-                                {cred.registrationNumber}
-                              </td>
-                              <td className="p-3 font-mono font-bold text-[#008751]">
-                                {cred.oneTimePin}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                    <DataTable
+                      caption="Bulk Onboarding Credentials"
+                      data={bulkResult.credentials}
+                      columns={bulkCredentialColumns}
+                      getRowKey={(cred) => `${cred.registrationNumber}-${cred.oneTimePin}`}
+                      mode="client"
+                      defaultPageSize={10}
+                      pageSizeOptions={[10, 25, 50, 100]}
+                      itemLabel={['credential', 'credentials']}
+                      searchPlaceholder="Search imported name, reg no, or PIN..."
+                      maxHeightClassName="max-h-72"
+                    />
 
                     <OneTimePinSlip
                       title="Bulk Onboarding Printable Slips"

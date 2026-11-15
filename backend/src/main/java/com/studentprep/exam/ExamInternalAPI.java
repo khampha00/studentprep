@@ -25,4 +25,8 @@ public interface ExamInternalAPI {
     default void grantRetake(UUID studentId) {
         grantRetake(studentId, "ADMIN");
     }
+
+    default String getSessionAnswerReceiptCode(UUID sessionId) {
+        return null;
+    }
 }

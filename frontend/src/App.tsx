@@ -26,6 +26,7 @@ import {
   clearStoredToken,
   decodeJwtPayload,
   getStoredToken,
+  isAuthRedirecting,
   isSessionEvictedProblem,
   parseErrorResponseData,
   setAuthRedirecting,
@@ -70,7 +71,7 @@ const processQueue = (error: unknown, token: string | null = null) => {
 };
 
 const redirectToLogin = (errorCode: 'session_expired' | 'auth_expired') => {
-  if (isRedirecting) {
+  if (isRedirecting || isAuthRedirecting()) {
     return;
   }
   isRedirecting = true;
@@ -103,7 +104,7 @@ axios.interceptors.response.use(
       const problemData = await parseErrorResponseData(error.response.data);
       if (isSessionEvictedProblem(problemData)) {
         processQueue(error, null);
-        if (!store.getState().exam.isExamTerminated) {
+        if (!store.getState().exam.isExamTerminated && !isAuthRedirecting()) {
           await clearAllLocalExamData();
           store.dispatch(resetExamState());
           clearStoredToken();
@@ -140,7 +141,7 @@ axios.interceptors.response.use(
           axios.isAxiosError(refreshError) &&
           (refreshError.response?.status === 401 || refreshError.response?.status === 403)
         ) {
-          if (!store.getState().exam.isExamTerminated) {
+          if (!store.getState().exam.isExamTerminated && !isAuthRedirecting()) {
             const refreshProblem = await parseErrorResponseData(refreshError.response.data);
             const errorCode = isSessionEvictedProblem(refreshProblem) ? 'session_expired' : 'auth_expired';
             await clearAllLocalExamData();

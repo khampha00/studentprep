@@ -29,6 +29,7 @@ const persistExamState = async (state: RootState) => {
     isSynced: false,
     questions: state.exam.questions?.length ? state.exam.questions : existing?.questions,
     contexts: state.exam.contexts && Object.keys(state.exam.contexts).length ? state.exam.contexts : existing?.contexts,
+    contextAssets: state.exam.contextAssets && Object.keys(state.exam.contextAssets).length ? state.exam.contextAssets : existing?.contextAssets,
     student: state.exam.student || existing?.student,
   });
 };

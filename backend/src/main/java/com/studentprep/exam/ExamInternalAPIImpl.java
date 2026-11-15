@@ -1,5 +1,6 @@
 package com.studentprep.exam;
 
+import com.studentprep.common.AnswerReceiptHasher;
 import com.studentprep.student.Student;
 import com.studentprep.student.StudentInternalAPI;
 import org.slf4j.Logger;
@@ -11,6 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -200,5 +202,37 @@ public class ExamInternalAPIImpl implements ExamInternalAPI {
                 actor != null ? actor : "ADMIN",
                 Instant.now()
         ));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public String getSessionAnswerReceiptCode(UUID sessionId) {
+        if (sessionId == null) {
+            return null;
+        }
+        return sessionRepository.findById(sessionId)
+                .map(session -> {
+                    Map<String, Object> state = session.getStatePayload();
+                    Map<String, String> answers = extractAnswersMap(state);
+                    return AnswerReceiptHasher.computeReceiptCode(sessionId, answers);
+                })
+                .orElse(null);
+    }
+
+    private static Map<String, String> extractAnswersMap(Map<String, Object> statePayload) {
+        if (statePayload == null) {
+            return Collections.emptyMap();
+        }
+        Object ansObj = statePayload.get("answers");
+        if (!(ansObj instanceof Map<?, ?> ansMap)) {
+            return Collections.emptyMap();
+        }
+        Map<String, String> answers = new HashMap<>();
+        for (Map.Entry<?, ?> entry : ansMap.entrySet()) {
+            if (entry.getKey() != null && entry.getValue() != null) {
+                answers.put(entry.getKey().toString(), entry.getValue().toString());
+            }
+        }
+        return answers;
     }
 }

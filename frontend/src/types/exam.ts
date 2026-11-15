@@ -3,6 +3,7 @@ export interface QuestionAsset {
   url?: string;
   data?: string;
   caption?: string;
+  alt?: string;
 }
 
 export interface QuestionContent {
@@ -26,7 +27,7 @@ export interface ExamQuestion {
   createdAt: number;
   updatedAt: number;
   subject: QuestionSubject;
-  context: { id: string; passage: string } | null;
+  context: { id: string; passage: string; assets?: QuestionAsset[] } | null;
   contextId?: string;
   topic: string | null;
   status: string;

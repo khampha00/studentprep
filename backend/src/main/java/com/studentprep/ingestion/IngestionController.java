@@ -22,6 +22,7 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 import software.amazon.awssdk.core.exception.SdkException;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -31,7 +32,7 @@ import java.util.NoSuchElementException;
 import java.util.UUID;
 
 /**
- * Administrative endpoints for diagram asset uploads, PDF ingestion, and ingestion job polling.
+ * Administrative endpoints for diagram asset uploads, asynchronous PDF ingestion, and ingestion job polling.
  */
 @RestController
 @RequestMapping("/api/v1/admin/ingestion")
@@ -40,9 +41,9 @@ public class IngestionController {
 
     private static final Logger log = LoggerFactory.getLogger(IngestionController.class);
     private static final long MAX_PDF_BYTES = 10L * 1024L * 1024L;
+    private static final int STREAM_BUFFER_SIZE = 8192;
     private static final String PDF_MAGIC_HEADER = "%PDF-";
 
-    private final DoclingService doclingService;
     private final SubjectRepository subjectRepository;
     private final S3Service s3Service;
     private final AsyncIngestionWorker asyncIngestionWorker;
@@ -51,13 +52,11 @@ public class IngestionController {
 
     @Autowired
     public IngestionController(
-            DoclingService doclingService,
             SubjectRepository subjectRepository,
             S3Service s3Service,
             AsyncIngestionWorker asyncIngestionWorker,
             IngestionJobRepository ingestionJobRepository,
             ErrorSanitizer errorSanitizer) {
-        this.doclingService = doclingService;
         this.subjectRepository = subjectRepository;
         this.s3Service = s3Service;
         this.asyncIngestionWorker = asyncIngestionWorker;
@@ -66,13 +65,11 @@ public class IngestionController {
     }
 
     public IngestionController(
-            DoclingService doclingService,
             SubjectRepository subjectRepository,
             S3Service s3Service,
             AsyncIngestionWorker asyncIngestionWorker,
             IngestionJobRepository ingestionJobRepository) {
         this(
-                doclingService,
                 subjectRepository,
                 s3Service,
                 asyncIngestionWorker,
@@ -97,28 +94,22 @@ public class IngestionController {
             @RequestParam("file") MultipartFile file,
             @RequestParam("subjectId") UUID subjectId,
             @RequestParam(value = "year", required = false) Integer year) {
-        validatePdfUpload(file);
+        byte[] pdfBytes = validateAndReadPdf(file);
 
         Subject subject = subjectRepository.findById(subjectId)
                 .orElseThrow(() -> new NoSuchElementException("Subject not found"));
 
-        String markdown;
-        try {
-            markdown = doclingService.parsePdf(file.getResource());
-        } catch (Exception ex) {
-            String sanitized = errorSanitizer.sanitizeException(ex);
-            log.error("PDF parsing failed for subject {}: {}", subjectId, sanitized);
-            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "PDF parsing failed: " + sanitized);
-        }
-
         IngestionJob job = new IngestionJob();
         job.setSubject(subject);
         job.setStatus(IngestionJobStatus.PENDING);
-        ingestionJobRepository.save(job);
+        IngestionJob savedJob = ingestionJobRepository.save(job);
 
-        asyncIngestionWorker.processMarkdown(job.getId(), subject.getId(), markdown);
+        asyncIngestionWorker.processPdf(savedJob.getId(), subject.getId(), pdfBytes);
 
-        return ResponseEntity.accepted().body(ApiResponse.of(Map.of("jobId", job.getId())));
+        return ResponseEntity.accepted().body(ApiResponse.of(Map.of(
+                "jobId", savedJob.getId(),
+                "status", savedJob.getStatus().name()
+        )));
     }
 
     @GetMapping("/jobs/{jobId}")
@@ -128,7 +119,7 @@ public class IngestionController {
         return ResponseEntity.ok(ApiResponse.of(job));
     }
 
-    private void validatePdfUpload(MultipartFile file) {
+    private byte[] validateAndReadPdf(MultipartFile file) {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("Uploaded PDF file must not be empty");
         }
@@ -149,16 +140,33 @@ public class IngestionController {
             );
         }
 
-        try (InputStream is = file.getInputStream()) {
-            byte[] header = is.readNBytes(PDF_MAGIC_HEADER.length());
-            if (header.length < PDF_MAGIC_HEADER.length()
-                    || !PDF_MAGIC_HEADER.equals(new String(header, StandardCharsets.US_ASCII))) {
-                throw new IllegalArgumentException("Invalid file format: magic bytes do not match PDF");
+        byte[] pdfBytes;
+        try (InputStream is = file.getInputStream();
+             ByteArrayOutputStream buffer = new ByteArrayOutputStream()) {
+            byte[] chunk = new byte[STREAM_BUFFER_SIZE];
+            long totalRead = 0L;
+            int read;
+            while ((read = is.read(chunk)) != -1) {
+                totalRead += read;
+                if (totalRead > MAX_PDF_BYTES) {
+                    throw new IllegalArgumentException("PDF file size must not exceed 10 MB");
+                }
+                buffer.write(chunk, 0, read);
             }
+            pdfBytes = buffer.toByteArray();
         } catch (IOException ex) {
             log.warn("Could not read uploaded PDF stream: {}", errorSanitizer.sanitizeException(ex));
             throw new IllegalArgumentException("Could not read uploaded PDF file");
         }
+
+        if (pdfBytes.length == 0) {
+            throw new IllegalArgumentException("Uploaded PDF file must not be empty");
+        }
+        if (pdfBytes.length < PDF_MAGIC_HEADER.length()
+                || !PDF_MAGIC_HEADER.equals(new String(pdfBytes, 0, PDF_MAGIC_HEADER.length(), StandardCharsets.US_ASCII))) {
+            throw new IllegalArgumentException("Invalid file format: magic bytes do not match PDF");
+        }
+        return pdfBytes;
     }
 
     private static String normalizeMimeType(String rawContentType) {

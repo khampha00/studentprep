@@ -104,17 +104,7 @@ public class ExamSessionManager {
         }
 
         ExamPayloadResponse strippedPayload = payloadGenerator.projectFromSnapshot(snapshotPayload);
-        Map<String, Object> payloadMap = new HashMap<>();
-        payloadMap.put("questions", strippedPayload.getQuestions());
-        payloadMap.put("contexts", strippedPayload.getContexts());
-        payloadMap.put("durationMinutes", strippedPayload.getDurationMinutes());
-        payloadMap.put("resumed", false);
-        payloadMap.put("answers", initialState.get("answers"));
-        payloadMap.put("timeLeft", initialState.get("timeLeft"));
-        payloadMap.put("tabSwitchCount", 0);
-        if (strippedPayload.getStudent() != null) {
-            payloadMap.put("student", strippedPayload.getStudent());
-        }
+        Map<String, Object> payloadMap = buildStartPayloadMap(strippedPayload, initialState, false);
 
         return new ExamStartResponse(
                 session.getId(),
@@ -169,17 +159,7 @@ public class ExamSessionManager {
         }
 
         ExamPayloadResponse strippedPayload = payloadGenerator.projectFromSnapshot(snapshot);
-        Map<String, Object> payloadMap = new HashMap<>();
-        payloadMap.put("questions", strippedPayload.getQuestions());
-        payloadMap.put("contexts", strippedPayload.getContexts());
-        payloadMap.put("durationMinutes", strippedPayload.getDurationMinutes());
-        payloadMap.put("resumed", true);
-        payloadMap.put("answers", statePayload.get("answers"));
-        payloadMap.put("timeLeft", statePayload.get("timeLeft"));
-        payloadMap.put("tabSwitchCount", statePayload.get("tabSwitchCount"));
-        if (strippedPayload.getStudent() != null) {
-            payloadMap.put("student", strippedPayload.getStudent());
-        }
+        Map<String, Object> payloadMap = buildStartPayloadMap(strippedPayload, statePayload, true);
 
         int shuffleSeed = existing.getShuffleSeed() != null ? existing.getShuffleSeed() : 1234;
         return new ExamStartResponse(
@@ -191,6 +171,26 @@ public class ExamSessionManager {
                 statePayload,
                 true
         );
+    }
+
+    private Map<String, Object> buildStartPayloadMap(
+            ExamPayloadResponse strippedPayload,
+            Map<String, Object> stateMap,
+            boolean resumed
+    ) {
+        Map<String, Object> payloadMap = new HashMap<>();
+        payloadMap.put("questions", strippedPayload.getQuestions());
+        payloadMap.put("contexts", strippedPayload.getContexts());
+        payloadMap.put("contextAssets", strippedPayload.getContextAssets() != null
+                ? strippedPayload.getContextAssets()
+                : new HashMap<>());
+        payloadMap.put("durationMinutes", strippedPayload.getDurationMinutes());
+        payloadMap.put("resumed", resumed);
+        payloadMap.put("answers", stateMap.get("answers"));
+        payloadMap.put("timeLeft", stateMap.get("timeLeft"));
+        payloadMap.put("tabSwitchCount", stateMap.get("tabSwitchCount"));
+        payloadMap.put("student", strippedPayload.getStudent());
+        return payloadMap;
     }
 
     private ExamSession resolveSession(UUID sessionId, UUID studentId) {

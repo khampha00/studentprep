@@ -118,29 +118,31 @@ Uploads diagram/media assets for questions. Strictly restricted to validated ras
 
 **Response (200 OK):** `{ "data": { "url": "<public-base-url>/<bucket>/diagrams/<uuid>.<ext>" } }`
 
-### `POST /api/v1/admin/ingestion/pdf` (`ROLE_ADMIN`)
-Uploads a past-questions PDF (`<= 10 MB`, `application/pdf`, `%PDF-` magic header) for layout analysis via authenticated `docling-parser` (`X-API-Key`), S3 uploading, and LLM structuring. Upstream errors stored in `ingestion_jobs` are stripped of API keys or query secrets.
+### `POST /api/v1/admin/ingestion/pdf` (`ROLE_ADMIN`, audited via `AuditLogAspect`)
+Validates a past-questions PDF upload (`<= 10 MB`, `.pdf` extension, `application/pdf`, `%PDF-` magic header), persists an `IngestionJob` in `PENDING` status, and immediately dispatches background Docling PDF parsing (`POST` to `docling-parser` with `X-API-Key`), MinIO diagram uploading, and Gemini structuring on the bounded `ingestionTaskExecutor`. Upstream/timeout errors persisted on the job record are stripped of API keys and secrets.
 
 **Content-Type:** `multipart/form-data`
-*   `file`: The PDF file binary.
-*   `subject`: (String) e.g., "MATH"
-*   `year`: (String) e.g., "2020"
+*   `file`: The PDF file binary (`<= 10 MB`, `%PDF-` magic bytes).
+*   `subjectId`: Target subject UUID (returns RFC 7807 `404 Not Found` if missing).
+*   `year`: (Optional integer) Past-question year metadata.
 
 **Response (202 Accepted):**
 ```json
 {
   "data": {
     "jobId": "uuid-1234",
-    "status": "PROCESSING",
-    "message": "PDF ingestion started in background."
+    "status": "PENDING"
   }
 }
 ```
 
-### `GET /api/v1/admin/questions`
-Fetches questions for Human-in-the-Loop (HITL) review.
+### `GET /api/v1/admin/ingestion/jobs/{jobId}` (`ROLE_ADMIN` — excluded from routine audit logging)
+Polls background ingestion progress (`PENDING`, `PROCESSING`, `COMPLETED`, `FAILED`), `totalChunks`, `processedChunks`, and sanitized `errorMessage`. Returns `404 Not Found` (`ProblemDetail`) when the job UUID does not exist.
 
-**Query Params:** `?status=DRAFT&page=0&size=20`
+### `GET /api/v1/admin/questions`
+Fetches questions for Human-in-the-Loop (HITL) review (`?status=DRAFT&subjectId={uuid}`). Excluded from `audit_logs` routine polling records.
+
+**Query Params:** `?status=DRAFT&subjectId={uuid}`
 
 **Response (200 OK):**
 ```json
@@ -151,6 +153,7 @@ Fetches questions for Human-in-the-Loop (HITL) review.
       "subject": "MATH",
       "topic": "Calculus",
       "status": "DRAFT",
+      "ingestionJobId": "uuid-1234",
       "content": { 
         "type": "MCQ_LATEX",
         "text": "Evaluate: \\( x^2 \\)",
@@ -158,23 +161,31 @@ Fetches questions for Human-in-the-Loop (HITL) review.
         "correctOption": "A"
       }
     }
-  ],
-  "meta": { "page": 0, "size": 20, "totalElements": 40, "totalPages": 2 }
+  ]
 }
 ```
 
-### `PUT /api/v1/admin/questions/{id}`
-Updates a question (fixing LLM/OCR hallucinations) and approves it for live exams.
+### `PUT /api/v1/admin/questions/{id}` (`ROLE_ADMIN`, audited via `AuditLogAspect`)
+Updates a question using validated DTO `QuestionUpdateRequest` (fixing LLM/OCR hallucinations) and/or promotes it to `ACTIVE` for live exams.
 
-**Request Body:**
+**Request Body (`QuestionUpdateRequest`):**
 ```json
 {
   "status": "ACTIVE",
+  "topic": "Calculus",
   "content": { 
-     // Complete updated JSONB Payload
+    // Complete updated JSONB Payload (ACTIVE requires non-blank text, correctOption, and valid option key)
   }
 }
 ```
+*   **400 Bad Request (`ProblemDetail`)**: Validation failure or incomplete content when approving to `ACTIVE`.
+*   **404 Not Found (`ProblemDetail`)**: Target question UUID does not exist.
+
+### `DELETE /api/v1/admin/subjects/{id}` (`ROLE_ADMIN`, audited via `AuditLogAspect`)
+Deletes an empty subject safely within a single database transaction, removing orphaned `question_contexts` rows and cascading historical `ingestion_jobs` before evicting `exam:questions:all` after commit.
+*   **200 OK:** `{ "data": { "status": "DELETED" } }`
+*   **404 Not Found (`ProblemDetail`):** Subject does not exist.
+*   **409 Conflict (`ProblemDetail`):** Active or draft questions still belong to the subject (`"Cannot delete subject while questions remain. Delete active and draft questions first."`).
 
 ---
 
@@ -373,11 +384,12 @@ Downloads the official printable student result slip PDF.
 
 ## 6. Admin Moderation & Exam Analytics (`/api/v1/admin/**`)
 
-### `GET /api/v1/admin/analytics/results` (`ROLE_ADMIN` or `ROLE_SUPERVISOR`)
-Returns paginated list of all candidate examination results.
+### `GET /api/v1/admin/analytics/results?page=0&size=20` (`ROLE_ADMIN` or `ROLE_SUPERVISOR`)
+Returns paginated list of all candidate examination results (excluded from `audit_logs` routine polling records).
+*   **Query Params:** `page` (`0`-indexed, default `0`), `size` (default `20`).
 *   **Response (200 OK):** Wrapped in `PagedResponse` `{ "data": [...], "meta": { "page", "size", "totalElements", "totalPages" } }`.
 *   **Null Safety:** Guaranteed null-safe serialization even when `topicBreakdown` is null.
-*   **Fields:** `id`, `examSessionId`, `studentName`, `registrationNumber`, `totalScore`, `maxScore`, `topicBreakdown`, `gradedAt`, `moderationStatus`, `sessionStatus`.
+*   **Fields:** `id`, `examSessionId`, `studentName`, `registrationNumber`, `totalScore`, `maxScore`, `topicBreakdown`, `gradedAt`, `moderationStatus`, `sessionStatus`, `answerReceiptCode`.
 
 ### `GET /api/v1/admin/analytics/flagged-sessions` (`ROLE_ADMIN` or `ROLE_SUPERVISOR`)
 Returns active non-superseded `FLAGGED_TAB_SWITCH`, `LATE_SUBMISSION_FLAGGED`, and `TIME_EXPIRED` sessions with full student metadata (`studentId`, `studentName`, `registrationNumber`, `sessionId`, `status`, `tabSwitchCount`, `startTime`, `endTime`, linked `resultId`, and `moderationStatus` if graded) for administrative review.
@@ -397,3 +409,16 @@ Voids an examination attempt and result.
 Grants candidate permission for a fresh examination sitting.
 *   **Action:** Marks current non-superseded `ExamSession` rows for candidate `{id}` as `superseded = true`, evicts active Redis session key, and enables the candidate to start one fresh exam sitting via `POST /api/v1/exams/start`.
 *   **Authorization:** `ROLE_ADMIN` only. `ROLE_SUPERVISOR` receives `403 Forbidden`.
+
+### `GET /api/v1/admin/exams/sessions/{sessionId}/script` (`ROLE_ADMIN` or `ROLE_SUPERVISOR`)
+Reconstructs the candidate's frozen question paper (`snapshot_payload`), submitted answers (`state_payload`), cryptographic SHA-256 Answer Receipt (`answerReceiptCode` + `answerSha256`), and timeline provenance (`lastClientSyncAt`, `submissionTrigger`) for dispute resolution.
+*   **Authorization:** `ROLE_ADMIN` and `ROLE_SUPERVISOR` (`200 OK`). `ROLE_STUDENT` receives `403 Forbidden`.
+
+### `GET /api/v1/admin/exams/sessions/{sessionId}/script/pdf` (`ROLE_ADMIN` or `ROLE_SUPERVISOR`, audited via `AuditLogAspect`)
+Generates a printable A4 PDF Examination Script Audit & Verification Report (`<CandidateName>_<RegNo>-Exam-Script-Audit.pdf`).
+*   **Authorization:** `ROLE_ADMIN` and `ROLE_SUPERVISOR` (`200 OK`, `application/pdf`). `ROLE_STUDENT` receives `403 Forbidden`.
+
+### Admin Audit Trail Policy (`AuditLogAspect`)
+*   **Audited:** All `/api/v1/admin/**` mutating requests (`POST`, `PUT`, `PATCH`, `DELETE`) and sensitive document/export `GET` endpoints (`/slip`, `/pdf`, `/script`, `/credentials-pdf`, `/export`).
+*   **Excluded:** Routine `GET`/`HEAD`/`OPTIONS` dashboard, analytics, question-bank, subject, and job-status polling requests.
+*   **Bounds:** `username`, `action`, and `endpoint` fields are truncated to `255` characters to match `VARCHAR(255)` schema bounds.

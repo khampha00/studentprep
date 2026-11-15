@@ -1,5 +1,6 @@
 package com.studentprep.analytics;
 
+import com.studentprep.common.AnswerReceiptHasher;
 import com.studentprep.common.SessionRedisKeys;
 import com.studentprep.exam.ExamInternalAPI;
 import com.studentprep.exam.ExamSession;
@@ -326,6 +327,148 @@ class ProctoringAndModerationIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + supervisorToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data").isArray());
+    }
+
+    @Test
+    void examScriptAudit_AllowsAdminAndSupervisor_VerifiesReceiptAndPdf_BlocksStudentWith403() throws Exception {
+        Student student = createStudent("Audit Candidate", "901234AU");
+
+        Map<String, Object> statePayload = new HashMap<>();
+        statePayload.put("answers", Map.of("q-math-1", "E", "q-phys-1", "A"));
+        statePayload.put("flagged", Map.of("q-phys-1", true));
+        statePayload.put("tabSwitchCount", 1);
+        statePayload.put("lastUpdated", 1763174400000L);
+
+        Map<String, Object> snapshotPayload = Map.of(
+                "contexts", Map.of("ctx-1", "Read the motion graph carefully."),
+                "contextAssets", Map.of("ctx-1", List.of(Map.of(
+                        "type", "image",
+                        "url", "http://localhost:9000/studentprep-assets/diagrams/motion-graph.png"
+                ))),
+                "questions", List.of(
+                        Map.of(
+                                "id", "q-math-1",
+                                "topic", "Trigonometry",
+                                "subject", Map.of("id", "sub-math", "name", "MATHEMATICS"),
+                                "content", Map.of(
+                                        "text", "Find the angle $\\theta = 60^\\circ$.",
+                                        "options", Map.of("A", "$90^\\circ$", "E", "$60^\\circ$"),
+                                        "correctOption", "E"
+                                )
+                        ),
+                        Map.of(
+                                "id", "q-phys-1",
+                                "topic", "Kinematics",
+                                "contextId", "ctx-1",
+                                "subject", Map.of("id", "sub-phys", "name", "PHYSICS"),
+                                "content", Map.of(
+                                        "text", "Calculate the velocity.",
+                                        "options", Map.of("A", "10 m/s", "B", "25 m/s"),
+                                        "correctOption", "B"
+                                )
+                        ),
+                        Map.of(
+                                "id", "q-eng-1",
+                                "topic", "Lexis",
+                                "subject", Map.of("id", "sub-eng", "name", "ENGLISH"),
+                                "content", Map.of(
+                                        "text", "Choose the synonym.",
+                                        "options", Map.of("A", "Fast", "B", "Slow"),
+                                        "correctOption", "A"
+                                )
+                        )
+                )
+        );
+
+        ExamSession session = new ExamSession();
+        session.setUserId(student.getId());
+        session.setStartTime(Instant.now().minusSeconds(3600));
+        session.setExpectedEndTime(Instant.now().plusSeconds(3600));
+        session.setEndTime(Instant.now().minusSeconds(60));
+        session.setStatus(ExamSessionStatus.SUBMITTED);
+        session.setStatePayload(statePayload);
+        session.setSnapshotPayload(snapshotPayload);
+        session = examSessionRepository.save(session);
+        createdSessionIds.add(session.getId());
+
+        examGraderListener.onExamSubmitted(new ExamSubmittedEvent(
+                session.getId(),
+                student.getId(),
+                statePayload,
+                ExamSessionStatus.SUBMITTED,
+                snapshotPayload
+        ));
+        ExamResult savedResult = examResultRepository.findByExamSessionId(session.getId()).orElseThrow();
+        createdResultIds.add(savedResult.getId());
+
+        String expectedReceiptCode = AnswerReceiptHasher.computeReceiptCode(
+                session.getId(),
+                Map.of("q-math-1", "E", "q-phys-1", "A")
+        );
+
+        String adminToken = issueToken("ADMIN_AUDIT", "ROLE_ADMIN");
+        String supervisorToken = issueToken("SUPERVISOR_AUDIT", "ROLE_SUPERVISOR");
+        String studentToken = issueToken(student.getRegistrationNumber(), "ROLE_STUDENT");
+
+        // 1. Admin inspects script JSON -> 200 OK with full provenance, receipt, and question outcomes
+        mockMvc.perform(get("/api/v1/admin/exams/sessions/" + session.getId() + "/script")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.studentName").value("Audit Candidate"))
+                .andExpect(jsonPath("$.data.registrationNumber").value("901234AU"))
+                .andExpect(jsonPath("$.data.submissionTrigger").value("MANUAL_SUBMIT"))
+                .andExpect(jsonPath("$.data.answerReceiptCode").value(expectedReceiptCode))
+                .andExpect(jsonPath("$.data.totalQuestions").value(3))
+                .andExpect(jsonPath("$.data.answeredCount").value(2))
+                .andExpect(jsonPath("$.data.correctCount").value(1))
+                .andExpect(jsonPath("$.data.incorrectCount").value(1))
+                .andExpect(jsonPath("$.data.unansweredCount").value(1))
+                .andExpect(jsonPath("$.data.questions[0].outcome").value("CORRECT"))
+                .andExpect(jsonPath("$.data.questions[0].sharedContextAssets").isEmpty())
+                .andExpect(jsonPath("$.data.questions[1].outcome").value("INCORRECT"))
+                .andExpect(jsonPath("$.data.questions[1].sharedContext").value("Read the motion graph carefully."))
+                .andExpect(jsonPath("$.data.questions[1].sharedContextAssets[0].url")
+                        .value("http://localhost:9000/studentprep-assets/diagrams/motion-graph.png"))
+                .andExpect(jsonPath("$.data.questions[1].flagged").value(true))
+                .andExpect(jsonPath("$.data.questions[2].outcome").value("UNANSWERED"));
+
+        // 2. Supervisor also inspects script JSON -> 200 OK
+        mockMvc.perform(get("/api/v1/admin/exams/sessions/" + session.getId() + "/script")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + supervisorToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.answerReceiptCode").value(expectedReceiptCode));
+
+        // 3. Both Admin and Supervisor can download the printable A4 Audit Script PDF -> 200 OK (%PDF)
+        byte[] adminPdf = mockMvc.perform(get("/api/v1/admin/exams/sessions/" + session.getId() + "/script/pdf")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsByteArray();
+        assertThat(new String(adminPdf, 0, 4)).isEqualTo("%PDF");
+
+        byte[] supervisorPdf = mockMvc.perform(get("/api/v1/admin/exams/sessions/" + session.getId() + "/script/pdf")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + supervisorToken))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsByteArray();
+        assertThat(new String(supervisorPdf, 0, 4)).isEqualTo("%PDF");
+
+        // 4. Student receives the matching answerReceiptCode on /api/v1/student/results,
+        //    but is strictly blocked (403 Forbidden) from accessing /script or /script/pdf
+        mockMvc.perform(get("/api/v1/student/results")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + studentToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.answerReceiptCode").value(expectedReceiptCode));
+
+        mockMvc.perform(get("/api/v1/admin/exams/sessions/" + session.getId() + "/script")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + studentToken))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(get("/api/v1/admin/exams/sessions/" + session.getId() + "/script/pdf")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + studentToken))
+                .andExpect(status().isForbidden());
     }
 
     private Student createStudent(String name, String regNumber) {

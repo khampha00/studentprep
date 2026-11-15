@@ -22,5 +22,6 @@ public interface QuestionRepository extends JpaRepository<Question, UUID> {
     List<Question> findByContext_Id(UUID contextId);
     List<Question> findByStatusAndSubject_IdIn(QuestionStatus status, List<UUID> subjectIds);
     List<Question> findBySubjectOrderByCreatedAtAsc(Subject subject);
+    List<Question> findByIngestionJobIdOrderByCreatedAtAsc(UUID ingestionJobId);
 }
 

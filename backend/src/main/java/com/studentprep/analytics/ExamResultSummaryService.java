@@ -97,7 +97,23 @@ public class ExamResultSummaryService {
                 maxScore,
                 overallPercentage,
                 passed,
-                subjectBreakdowns);
+                subjectBreakdowns,
+                null);
+    }
+
+    public ExamResultSlipData summarize(ExamResult result, String answerReceiptCode) {
+        ExamResultSlipData base = summarize(result);
+        return new ExamResultSlipData(
+                base.resultId(),
+                base.candidateName(),
+                base.registrationNumber(),
+                base.gradedAt(),
+                base.totalScore(),
+                base.maxScore(),
+                base.overallPercentage(),
+                base.passed(),
+                base.subjectScores(),
+                answerReceiptCode);
     }
 
     private static String extractSubjectName(String topicKey) {
@@ -131,6 +147,20 @@ public class ExamResultSummaryService {
             int maxScore,
             double overallPercentage,
             boolean passed,
-            List<SubjectScore> subjectScores) {
+            List<SubjectScore> subjectScores,
+            String answerReceiptCode) {
+
+        public ExamResultSlipData(
+                UUID resultId,
+                String candidateName,
+                String registrationNumber,
+                Instant gradedAt,
+                int totalScore,
+                int maxScore,
+                double overallPercentage,
+                boolean passed,
+                List<SubjectScore> subjectScores) {
+            this(resultId, candidateName, registrationNumber, gradedAt, totalScore, maxScore, overallPercentage, passed, subjectScores, null);
+        }
     }
 }

@@ -38,6 +38,44 @@ public interface ExamResultRepository extends JpaRepository<ExamResult, UUID> {
     @Query(value = "SELECT e FROM ExamResult e JOIN FETCH e.student", countQuery = "SELECT COUNT(e) FROM ExamResult e")
     Page<ExamResult> findAllWithStudent(Pageable pageable);
 
+    @Query(
+            value = "SELECT e FROM ExamResult e JOIN FETCH e.student WHERE e.moderationStatus = :status",
+            countQuery = "SELECT COUNT(e) FROM ExamResult e WHERE e.moderationStatus = :status")
+    Page<ExamResult> findByModerationStatusWithStudent(
+            @Param("status") ExamResultModerationStatus status,
+            Pageable pageable);
+
+    @Query(
+            value = """
+                    SELECT e FROM ExamResult e JOIN FETCH e.student s
+                    WHERE LOWER(s.name) LIKE :pattern ESCAPE '!'
+                       OR LOWER(s.registrationNumber) LIKE :pattern ESCAPE '!'
+                    """,
+            countQuery = """
+                    SELECT COUNT(e) FROM ExamResult e JOIN e.student s
+                    WHERE LOWER(s.name) LIKE :pattern ESCAPE '!'
+                       OR LOWER(s.registrationNumber) LIKE :pattern ESCAPE '!'
+                    """)
+    Page<ExamResult> searchWithStudent(@Param("pattern") String pattern, Pageable pageable);
+
+    @Query(
+            value = """
+                    SELECT e FROM ExamResult e JOIN FETCH e.student s
+                    WHERE e.moderationStatus = :status
+                      AND (LOWER(s.name) LIKE :pattern ESCAPE '!'
+                           OR LOWER(s.registrationNumber) LIKE :pattern ESCAPE '!')
+                    """,
+            countQuery = """
+                    SELECT COUNT(e) FROM ExamResult e JOIN e.student s
+                    WHERE e.moderationStatus = :status
+                      AND (LOWER(s.name) LIKE :pattern ESCAPE '!'
+                           OR LOWER(s.registrationNumber) LIKE :pattern ESCAPE '!')
+                    """)
+    Page<ExamResult> searchByModerationStatusWithStudent(
+            @Param("pattern") String pattern,
+            @Param("status") ExamResultModerationStatus status,
+            Pageable pageable);
+
     @Query("SELECT AVG(CAST(e.totalScore AS double) / e.maxScore) * 100 FROM ExamResult e WHERE e.maxScore > 0 AND e.examSessionId = :examId AND e.moderationStatus IN ('ELIGIBLE', 'CLEARED')")
     Double getAverageScorePercentageByExamId(@Param("examId") UUID examId);
 

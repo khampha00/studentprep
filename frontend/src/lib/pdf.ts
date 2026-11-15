@@ -20,6 +20,19 @@ export function buildResultSlipFilename(
 }
 
 /**
+ * Formats a safe download filename for a candidate's audited examination script PDF.
+ */
+export function buildExamScriptFilename(
+  studentName?: string | null,
+  registrationNumber?: string | null,
+  fallbackId?: string | null
+): string {
+  const safeName = sanitizeFilenameSegment(studentName, 'Candidate');
+  const safeReg = sanitizeFilenameSegment(registrationNumber, fallbackId || 'Session');
+  return `${safeName}_${safeReg}-Exam-Script-Audit.pdf`;
+}
+
+/**
  * Extracts a filename from a server Content-Disposition header when exposed, or returns fallback.
  */
 export function extractFilenameFromDisposition(

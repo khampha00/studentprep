@@ -94,10 +94,10 @@ async function createStudentViaUi(
   page: Page,
   candidateName: string
 ): Promise<{ registrationNumber: string; oneTimePin: string }> {
-  await page.goto('/admin');
-  await expect(page.getByRole('link', { name: 'Students' })).toBeVisible({ timeout: 15000 });
-  await page.getByRole('link', { name: 'Students' }).click();
-  await expect(page.getByRole('heading', { name: 'Students', exact: true })).toBeVisible();
+  await page.goto('/admin/students');
+  await expect(page.getByRole('heading', { name: 'Students', exact: true })).toBeVisible({
+    timeout: 15000,
+  });
 
   await page.getByRole('button', { name: 'Register Student' }).click();
   await expect(page.getByRole('heading', { name: 'Register Student' })).toBeVisible();
@@ -399,13 +399,15 @@ test.describe.serial('Exam Kiosk Isolation, Offline PWA & Integrity E2E (Unmocke
 
       // Strike 1
       await page.evaluate(() => window.dispatchEvent(new Event('blur')));
-      await expect(page.getByText(/Warning: Unpermitted Action/i)).toBeVisible({ timeout: 5000 });
+      await expect(page.getByText('Strikes: 1 / 3')).toBeVisible({ timeout: 5000 });
       await page.getByRole('button', { name: 'I Understand' }).click();
+      await expect(page.getByText(/Warning: Unpermitted Action/i)).toBeHidden({ timeout: 5000 });
 
       // Strike 2
       await page.evaluate(() => window.dispatchEvent(new Event('blur')));
-      await expect(page.getByText(/Warning: Unpermitted Action/i)).toBeVisible({ timeout: 5000 });
+      await expect(page.getByText('Strikes: 2 / 3')).toBeVisible({ timeout: 5000 });
       await page.getByRole('button', { name: 'I Understand' }).click();
+      await expect(page.getByText(/Warning: Unpermitted Action/i)).toBeHidden({ timeout: 5000 });
 
       // Strike 3 -> Automatic termination
       await page.evaluate(() => {

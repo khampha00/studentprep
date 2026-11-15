@@ -1,42 +1,60 @@
-// React import removed due to unused variable TS error
+import type { ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
-import remarkMath from 'remark-math';
-import rehypeKatex from 'rehype-katex';
-import remarkGfm from 'remark-gfm';
 import 'katex/dist/katex.min.css';
+import {
+  MARKDOWN_REHYPE_PLUGINS,
+  MARKDOWN_REMARK_PLUGINS,
+  prepareMathMarkdown,
+  safeUrlTransform,
+} from '@/lib/katex';
+import { cn } from '@/lib/utils';
 
 interface MathTextProps {
   content: string;
   className?: string;
+  inline?: boolean;
 }
 
-export function MathText({ content, className = '' }: MathTextProps) {
-  // 1. Replace \frac with \dfrac for spacious fractions
-  // 2. Add \mathstrut inside \sqrt to fix the KaTeX bug where the root line intersects superscripts
-  const processedContent = content 
-    ? content.replace(/\\frac/g, '\\dfrac').replace(/\\sqrt\{/g, '\\sqrt{\\mathstrut ')
-    : '';
+const INLINE_MARKDOWN_COMPONENTS = {
+  p: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
+};
+
+export function MathText({ content, className = '', inline = false }: MathTextProps) {
+  const processedContent = prepareMathMarkdown(content);
+
+  if (inline) {
+    return (
+      <span
+        className={cn(
+          'inline-block align-baseline text-slate-900 [&>p]:inline [&>p]:m-0',
+          className
+        )}
+      >
+        <ReactMarkdown
+          skipHtml
+          urlTransform={safeUrlTransform}
+          remarkPlugins={MARKDOWN_REMARK_PLUGINS}
+          rehypePlugins={MARKDOWN_REHYPE_PLUGINS}
+          components={INLINE_MARKDOWN_COMPONENTS}
+        >
+          {processedContent}
+        </ReactMarkdown>
+      </span>
+    );
+  }
 
   return (
-    <div className={`prose prose-sm prose-slate max-w-none ${className}`}>
+    <div
+      className={cn(
+        'prose prose-sm prose-slate max-w-none text-slate-900 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0',
+        className
+      )}
+    >
       <ReactMarkdown
-        remarkPlugins={[remarkMath, remarkGfm]}
-        rehypePlugins={[
-          rehypeKatex,
-          () => (tree) => {
-            const walk = (node: any) => {
-              if (node.type === 'element' && node.properties && node.properties.className) {
-                if (Array.isArray(node.properties.className) && node.properties.className.includes('katex')) {
-                  node.properties.className.push('not-prose');
-                }
-              }
-              if (node.children) {
-                node.children.forEach(walk);
-              }
-            };
-            walk(tree);
-          }
-        ]}
+        skipHtml
+        urlTransform={safeUrlTransform}
+        remarkPlugins={MARKDOWN_REMARK_PLUGINS}
+        rehypePlugins={MARKDOWN_REHYPE_PLUGINS}
       >
         {processedContent}
       </ReactMarkdown>

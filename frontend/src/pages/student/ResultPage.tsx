@@ -165,6 +165,14 @@ export default function ResultPage() {
                 <div className="mt-2 inline-block px-3 py-1 bg-emerald-100 text-emerald-800 text-xs font-bold rounded-full">
                   Overall: {percentage}%
                 </div>
+                {results.answerReceiptCode && (
+                  <div className="mt-3 pt-3 border-t border-slate-200 flex items-center justify-between text-xs text-slate-600">
+                    <span className="font-semibold uppercase tracking-wider text-slate-500">Answer Receipt Code:</span>
+                    <span className="font-mono font-bold text-slate-900 bg-white px-2.5 py-0.5 rounded border border-slate-300" data-testid="student-answer-receipt-code">
+                      {results.answerReceiptCode}
+                    </span>
+                  </div>
+                )}
               </div>
 
               {/* Subject Breakdown Cards */}

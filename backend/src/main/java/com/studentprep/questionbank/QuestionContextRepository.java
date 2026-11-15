@@ -15,4 +15,8 @@ public interface QuestionContextRepository extends JpaRepository<QuestionContext
     @Modifying
     @Query("DELETE FROM QuestionContext context WHERE NOT EXISTS (SELECT question FROM Question question WHERE question.context = context)")
     void deleteOrphanedContexts();
+
+    @Transactional
+    @Modifying
+    void deleteBySubject_Id(UUID subjectId);
 }

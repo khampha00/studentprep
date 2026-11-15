@@ -35,6 +35,9 @@ export default function ExamDashboard() {
   const autoSubmittedRef = useRef(false);
 
   useEffect(() => {
+    if (exam.isExamTerminated || isAuthRedirecting()) {
+      return;
+    }
     if (!exam.questions || exam.questions.length === 0) {
       dispatch(initializeExam())
         .unwrap()
@@ -48,7 +51,7 @@ export default function ExamDashboard() {
     } else {
       dispatch(hydrateFromServer());
     }
-  }, [dispatch, exam.questions?.length, navigate]);
+  }, [dispatch, exam.isExamTerminated, exam.questions?.length, navigate]);
 
   useEffect(() => {
     // Prevent accidental browser back button navigation out of exam
@@ -123,15 +126,15 @@ export default function ExamDashboard() {
       dispatch(syncExamData({ isFinal: true, reason: 'FLAGGED_TAB_SWITCH' }))
         .finally(() => {
           setTimeout(async () => {
+            setAuthRedirecting(true);
             await clearAllLocalExamData();
-            dispatch(resetExamState());
             try {
               await axios.post('/api/v1/auth/logout', {}, { withCredentials: true });
             } catch {
               // ignore: session may already be evicted by FLAGGED_TAB_SWITCH listener
             }
             localStorage.removeItem('token');
-            setAuthRedirecting(true);
+            dispatch(resetExamState());
             window.location.href = '/?terminated=malpractice';
           }, 3000);
         });
@@ -220,6 +223,7 @@ export default function ExamDashboard() {
   const safeIdx = subjectIndexes[currentSubjectId] || 0;
   const currentQ = currentSubjectQuestions[safeIdx];
   const sharedContext = currentQ?.contextId ? exam.contexts[currentQ.contextId] : null;
+  const sharedContextAssets = currentQ?.contextId ? (exam.contextAssets?.[currentQ.contextId] || []) : [];
 
   const currentSubjectObj = subjects.find(s => s.id === currentSubjectId);
   const isFlagged = exam.flagged?.[currentQ?.id];
@@ -327,12 +331,19 @@ export default function ExamDashboard() {
             </CardHeader>
             
             <CardContent className="p-0 flex-1 flex flex-col relative">
-              {sharedContext && (
-                <div className="p-4 lg:p-6 border-b border-slate-200 bg-slate-50 overflow-y-auto max-h-[40vh]">
-                  <div className="mb-4">
-                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500 bg-slate-200 px-2 py-1 rounded">Shared Context</span>
-                  </div>
-                  <RichText text={sharedContext} />
+              {(sharedContext || sharedContextAssets.length > 0) && (
+                <div className="p-4 lg:p-6 border-b border-slate-200 bg-slate-50 overflow-y-auto max-h-[40vh] space-y-4">
+                  {sharedContext && <RichText text={sharedContext} />}
+                  {sharedContextAssets.map((asset, i) =>
+                    asset?.type?.toLowerCase() === 'image' && asset.url ? (
+                      <img
+                        key={i}
+                        src={asset.url}
+                        alt={asset.alt || asset.caption || 'Context diagram'}
+                        className="max-w-md rounded border border-slate-200"
+                      />
+                    ) : null
+                  )}
                 </div>
               )}
               
