@@ -187,9 +187,19 @@ public class StudentResultService {
     }
 
     private GeneratedResultSlip renderSlip(ExamResult result, Student student, UUID fallbackId) {
-        byte[] content = examResultSlipGenerator.generateResultSlipPdf(result);
+        String receiptCode = resolveAnswerReceiptCode(result.getExamSessionId());
+        byte[] content = receiptCode != null
+                ? examResultSlipGenerator.generateResultSlipPdf(result, receiptCode)
+                : examResultSlipGenerator.generateResultSlipPdf(result);
         String filename = buildResultSlipFilename(student, fallbackId);
         return new GeneratedResultSlip(content, filename);
+    }
+
+    private String resolveAnswerReceiptCode(UUID examSessionId) {
+        if (examInternalAPI == null || examSessionId == null) {
+            return null;
+        }
+        return examInternalAPI.getSessionAnswerReceiptCode(examSessionId);
     }
 
     private StudentResultDto toResultDto(ExamResult result) {
@@ -205,7 +215,8 @@ public class StudentResultService {
                 examResultSummaryService.computeSubjectScores(result),
                 formatGradedAt(result),
                 result.getExamSessionId(),
-                modStatus);
+                modStatus,
+                resolveAnswerReceiptCode(result.getExamSessionId()));
     }
 
     private LatestStudentResultDto toLatestResultDto(ExamResult result, Student student) {
@@ -230,7 +241,8 @@ public class StudentResultService {
                 result.getExamSessionId(),
                 modStatus,
                 reviewStatus,
-                message);
+                message,
+                resolveAnswerReceiptCode(result.getExamSessionId()));
     }
 
     private static String formatGradedAt(ExamResult result) {
@@ -255,7 +267,22 @@ public class StudentResultService {
             Map<String, int[]> subjectScores,
             String gradedAt,
             UUID examSessionId,
-            String moderationStatus) {
+            String moderationStatus,
+            String answerReceiptCode) {
+
+        public StudentResultDto(
+                UUID id,
+                String studentName,
+                String registrationNumber,
+                Integer totalScore,
+                Integer maxScore,
+                Map<String, TopicStats> topicBreakdown,
+                Map<String, int[]> subjectScores,
+                String gradedAt,
+                UUID examSessionId,
+                String moderationStatus) {
+            this(id, studentName, registrationNumber, totalScore, maxScore, topicBreakdown, subjectScores, gradedAt, examSessionId, moderationStatus, null);
+        }
 
         public StudentResultDto(
                 UUID id,
@@ -267,7 +294,7 @@ public class StudentResultService {
                 Map<String, int[]> subjectScores,
                 String gradedAt,
                 UUID examSessionId) {
-            this(id, studentName, registrationNumber, totalScore, maxScore, topicBreakdown, subjectScores, gradedAt, examSessionId, "ELIGIBLE");
+            this(id, studentName, registrationNumber, totalScore, maxScore, topicBreakdown, subjectScores, gradedAt, examSessionId, "ELIGIBLE", null);
         }
     }
 
@@ -285,7 +312,26 @@ public class StudentResultService {
             UUID examSessionId,
             String moderationStatus,
             String reviewStatus,
-            String message) {
+            String message,
+            String answerReceiptCode) {
+
+        public LatestStudentResultDto(
+                UUID id,
+                String studentName,
+                String registrationNumber,
+                Integer score,
+                Integer total,
+                Integer totalScore,
+                Integer maxScore,
+                Map<String, TopicStats> topicBreakdown,
+                Map<String, int[]> subjectScores,
+                String gradedAt,
+                UUID examSessionId,
+                String moderationStatus,
+                String reviewStatus,
+                String message) {
+            this(id, studentName, registrationNumber, score, total, totalScore, maxScore, topicBreakdown, subjectScores, gradedAt, examSessionId, moderationStatus, reviewStatus, message, null);
+        }
 
         public LatestStudentResultDto(
                 UUID id,
@@ -299,7 +345,7 @@ public class StudentResultService {
                 Map<String, int[]> subjectScores,
                 String gradedAt,
                 UUID examSessionId) {
-            this(id, studentName, registrationNumber, score, total, totalScore, maxScore, topicBreakdown, subjectScores, gradedAt, examSessionId, "ELIGIBLE", null, null);
+            this(id, studentName, registrationNumber, score, total, totalScore, maxScore, topicBreakdown, subjectScores, gradedAt, examSessionId, "ELIGIBLE", null, null, null);
         }
     }
 

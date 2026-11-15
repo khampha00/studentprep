@@ -397,3 +397,11 @@ Voids an examination attempt and result.
 Grants candidate permission for a fresh examination sitting.
 *   **Action:** Marks current non-superseded `ExamSession` rows for candidate `{id}` as `superseded = true`, evicts active Redis session key, and enables the candidate to start one fresh exam sitting via `POST /api/v1/exams/start`.
 *   **Authorization:** `ROLE_ADMIN` only. `ROLE_SUPERVISOR` receives `403 Forbidden`.
+
+### `GET /api/v1/admin/exams/sessions/{sessionId}/script` (`ROLE_ADMIN` or `ROLE_SUPERVISOR`)
+Reconstructs the candidate's frozen question paper (`snapshot_payload`), submitted answers (`state_payload`), cryptographic SHA-256 Answer Receipt (`answerReceiptCode` + `answerSha256`), and timeline provenance (`lastClientSyncAt`, `submissionTrigger`) for dispute resolution.
+*   **Authorization:** `ROLE_ADMIN` and `ROLE_SUPERVISOR` (`200 OK`). `ROLE_STUDENT` receives `403 Forbidden`.
+
+### `GET /api/v1/admin/exams/sessions/{sessionId}/script/pdf` (`ROLE_ADMIN` or `ROLE_SUPERVISOR`)
+Generates a printable A4 PDF Examination Script Audit & Verification Report (`<CandidateName>_<RegNo>-Exam-Script-Audit.pdf`).
+*   **Authorization:** `ROLE_ADMIN` and `ROLE_SUPERVISOR` (`200 OK`, `application/pdf`). `ROLE_STUDENT` receives `403 Forbidden`.

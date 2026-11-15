@@ -80,6 +80,7 @@ public class AnalyticsController {
                             ? "LATE_SUBMISSION_FLAGGED"
                             : "SUBMITTED";
                     map.put("sessionStatus", sessionStatus);
+                    map.put("answerReceiptCode", examInternalAPI.getSessionAnswerReceiptCode(r.getExamSessionId()));
                     return map;
                 }).collect(Collectors.toList());
 

@@ -80,6 +80,11 @@ public class ExamResultSlipGenerator {
         return renderPdf(slipData);
     }
 
+    public byte[] generateResultSlipPdf(ExamResult result, String answerReceiptCode) {
+        ExamResultSlipData slipData = summaryService.summarize(result, answerReceiptCode);
+        return renderPdf(slipData);
+    }
+
     /**
      * Renders an {@link ExamResultSlipData} view model into an A4 PDF document.
      */
@@ -148,7 +153,10 @@ public class ExamResultSlipGenerator {
         addKeyValuePair(infoTable, "Candidate Name:", slipData.candidateName(), BOLD_CELL_FONT);
         addKeyValuePair(infoTable, "Registration No:", slipData.registrationNumber(), BOLD_CELL_FONT);
         addKeyValuePair(infoTable, "Examination Date:", gradedAtText, NORMAL_CELL_FONT);
-        addKeyValuePair(infoTable, "Result ID:", formatResultIdPreview(slipData.resultId()), SMALL_MUTED_FONT);
+        String receiptOrId = (slipData.answerReceiptCode() != null && !slipData.answerReceiptCode().isBlank())
+                ? slipData.answerReceiptCode()
+                : formatResultIdPreview(slipData.resultId());
+        addKeyValuePair(infoTable, "Answer Receipt:", receiptOrId, BOLD_CELL_FONT);
 
         document.add(infoTable);
     }

@@ -88,6 +88,8 @@ public class SecurityConfig {
                         .requestMatchers(
                                 HttpMethod.GET,
                                 "/api/v1/admin/analytics/**",
+                                "/api/v1/admin/exams/sessions/*/script",
+                                "/api/v1/admin/exams/sessions/*/script/pdf",
                                 "/api/v1/admin/subjects",
                                 "/api/v1/admin/subjects/**",
                                 "/api/v1/admin/questions",
