@@ -223,4 +223,41 @@ class ExamPayloadGeneratorTest {
         assertThat(response.getContexts()).containsKey(ctx.getId().toString());
         assertThat(response.getContexts().get(ctx.getId().toString())).isEqualTo("Context passage for reading comprehension");
     }
+
+    @Test
+    void testContextAssetsProjectedAndLegacySnapshotsHandledGracefully() {
+        QuestionContext ctx = new QuestionContext();
+        UUID ctxId = UUID.randomUUID();
+        ctx.setId(ctxId);
+        ctx.setPassage("Use the diagram below to answer questions 1 and 2");
+        ctx.setAssets(List.of(Map.of(
+                "type", "image",
+                "url", "http://localhost:9000/studentprep-assets/diagrams/yam.png"
+        )));
+
+        Question q = new Question();
+        q.setId(UUID.randomUUID());
+        q.setContext(ctx);
+        q.setContent(Map.of("text", "Yam is used in this set-up because it", "correctOption", "A"));
+
+        when(examCacheService.getCachedQuestions()).thenReturn(List.of(q));
+        when(studentInternalAPI.findById(any())).thenReturn(Optional.empty());
+
+        Map<String, Object> snapshot = generator.buildSessionSnapshot(UUID.randomUUID(), 1234);
+        assertThat(snapshot).containsKey("contextAssets");
+
+        ExamPayloadResponse response = generator.projectFromSnapshot(snapshot);
+        assertThat(response.getContextAssets()).containsKey(ctxId.toString());
+        assertThat(response.getContextAssets().get(ctxId.toString()))
+                .hasSize(1)
+                .first()
+                .extracting(asset -> asset.get("url"))
+                .isEqualTo("http://localhost:9000/studentprep-assets/diagrams/yam.png");
+
+        // Backward compatibility: historical snapshots without "contextAssets" must project an empty map
+        Map<String, Object> legacySnapshot = new HashMap<>(snapshot);
+        legacySnapshot.remove("contextAssets");
+        ExamPayloadResponse legacyResponse = generator.projectFromSnapshot(legacySnapshot);
+        assertThat(legacyResponse.getContextAssets()).isNotNull().isEmpty();
+    }
 }

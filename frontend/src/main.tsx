@@ -5,6 +5,9 @@ import { store } from './store/store'
 import App from './App'
 import '@fontsource-variable/inter'
 import './index.css'
+import { initPwaUpdates } from './lib/pwa'
+
+initPwaUpdates()
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>

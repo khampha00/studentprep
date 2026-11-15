@@ -22,6 +22,7 @@ export interface QuestionAuditItem {
   subjectName: string;
   topic: string;
   sharedContext?: string | null;
+  sharedContextAssets?: { type?: string; url?: string; alt?: string; caption?: string }[];
   prompt: string;
   assets?: { type?: string; url?: string; alt?: string }[];
   options: Record<string, string>;

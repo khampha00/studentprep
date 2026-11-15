@@ -1,7 +1,7 @@
 import { createSlice, type PayloadAction, createAsyncThunk } from '@reduxjs/toolkit';
 import { db, type LocalExamState, clearAllLocalExamData } from './db';
 import axios from 'axios';
-import type { ExamQuestion } from '../types/exam';
+import type { ExamQuestion, QuestionAsset } from '../types/exam';
 import { decodeJwtPayload, getStoredToken } from '../lib/auth';
 
 export { clearAllLocalExamData };
@@ -21,6 +21,7 @@ export interface ExamState {
   shuffleSeed: number | null;
   questions: ExamQuestion[];
   contexts: Record<string, string>;
+  contextAssets: Record<string, QuestionAsset[]>;
   answers: Record<string, string>;
   flagged: Record<string, boolean>;
   student: { name: string; registrationNumber: string } | null;
@@ -40,6 +41,7 @@ const initialState: ExamState = {
   shuffleSeed: null,
   questions: [],
   contexts: {},
+  contextAssets: {},
   answers: {},
   flagged: {},
   student: null,
@@ -74,6 +76,7 @@ export const initializeExam = createAsyncThunk(
       const serverPayload = startData?.payload;
       const questions = serverPayload?.questions || [];
       const contexts = serverPayload?.contexts || {};
+      const contextAssets: Record<string, QuestionAsset[]> = serverPayload?.contextAssets || {};
       const student = serverPayload?.student || (tokenPayload ? {
         name: (tokenPayload as any).name || activeSub,
         registrationNumber: activeSub,
@@ -120,6 +123,9 @@ export const initializeExam = createAsyncThunk(
         if (Object.keys(contexts).length > 0) {
           localState.contexts = contexts;
         }
+        if (serverPayload?.contextAssets !== undefined) {
+          localState.contextAssets = contextAssets;
+        }
         if (student) {
           localState.student = student;
         }
@@ -141,6 +147,7 @@ export const initializeExam = createAsyncThunk(
           isSynced: true,
           questions,
           contexts,
+          contextAssets,
           student,
         };
         await db.examStates.put(newState);
@@ -306,12 +313,14 @@ export const fetchExamPayload = createAsyncThunk(
       const response = await axios.get('/api/v1/exams/active/payload');
       const questions = response.data?.data?.questions || [];
       const contexts = response.data?.data?.contexts || {};
+      const contextAssets: Record<string, QuestionAsset[]> = response.data?.data?.contextAssets || {};
       const student = response.data?.data?.student || null;
 
       if (state.sessionId) {
         await db.examStates.update(state.sessionId, {
           questions,
           contexts,
+          contextAssets,
           student,
         });
       }
@@ -319,6 +328,7 @@ export const fetchExamPayload = createAsyncThunk(
       return {
         questions,
         contexts,
+        contextAssets,
         student,
       };
     } catch (err: any) {
@@ -328,6 +338,7 @@ export const fetchExamPayload = createAsyncThunk(
           return {
             questions: local.questions,
             contexts: local.contexts || {},
+            contextAssets: local.contextAssets || {},
             student: local.student || null,
           };
         }
@@ -435,6 +446,9 @@ const examSlice = createSlice({
       if (payload.contexts && Object.keys(payload.contexts).length > 0) {
         state.contexts = payload.contexts;
       }
+      if (payload.contextAssets) {
+        state.contextAssets = payload.contextAssets;
+      }
       if (payload.student) {
         state.student = payload.student;
       }
@@ -442,6 +456,7 @@ const examSlice = createSlice({
     builder.addCase(fetchExamPayload.fulfilled, (state, action) => {
       state.questions = action.payload.questions;
       state.contexts = action.payload.contexts;
+      state.contextAssets = action.payload.contextAssets;
       state.student = action.payload.student;
       state.payloadError = null;
     });

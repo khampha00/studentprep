@@ -1,16 +1,63 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
-import remarkMath from 'remark-math';
-import remarkGfm from 'remark-gfm';
-import rehypeKatex from 'rehype-katex';
+import {
+  MARKDOWN_REHYPE_PLUGINS,
+  MARKDOWN_REMARK_PLUGINS,
+  prepareMathMarkdown,
+  safeUrlTransform,
+} from '@/lib/katex';
+import { cn } from '@/lib/utils';
 
-export const RichText = React.memo(function RichText({ text }: { text: string }) {
-  const processedText = text.replace(/\\\((.*?)\\\)/g, '$$$1$$');
+interface RichTextProps {
+  text: string;
+  className?: string;
+  inline?: boolean;
+}
+
+const INLINE_MARKDOWN_COMPONENTS = {
+  p: ({ children }: { children?: React.ReactNode }) => <span>{children}</span>,
+};
+
+export const RichText = React.memo(function RichText({
+  text,
+  className,
+  inline = false,
+}: RichTextProps) {
+  const processedText = prepareMathMarkdown(text);
+
+  if (inline) {
+    return (
+      <span
+        className={cn(
+          'inline-block align-baseline text-slate-900 [&>p]:inline [&>p]:m-0',
+          className
+        )}
+      >
+        <ReactMarkdown
+          skipHtml
+          urlTransform={safeUrlTransform}
+          remarkPlugins={MARKDOWN_REMARK_PLUGINS}
+          rehypePlugins={MARKDOWN_REHYPE_PLUGINS}
+          components={INLINE_MARKDOWN_COMPONENTS}
+        >
+          {processedText}
+        </ReactMarkdown>
+      </span>
+    );
+  }
+
   return (
-    <div className="prose prose-slate max-w-none">
+    <div
+      className={cn(
+        'prose prose-slate max-w-none text-slate-900 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0',
+        className
+      )}
+    >
       <ReactMarkdown
-        remarkPlugins={[remarkMath, remarkGfm]}
-        rehypePlugins={[rehypeKatex]}
+        skipHtml
+        urlTransform={safeUrlTransform}
+        remarkPlugins={MARKDOWN_REMARK_PLUGINS}
+        rehypePlugins={MARKDOWN_REHYPE_PLUGINS}
       >
         {processedText}
       </ReactMarkdown>

@@ -3,6 +3,7 @@ package com.studentprep.student;
 import com.studentprep.common.ApiResponse;
 import com.studentprep.common.PagedResponse;
 import com.studentprep.common.SessionRedisKeys;
+import com.studentprep.common.TableQueryUtils;
 import com.studentprep.student.StudentManagementService.ProvisionedStudent;
 import com.studentprep.student.dto.BatchCredentialPdfRequest;
 import com.studentprep.student.dto.BulkImportResponse;
@@ -18,6 +19,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
@@ -40,6 +43,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.UUID;
 
@@ -49,6 +54,11 @@ public class StudentAdminController {
 
     private static final Logger log = LoggerFactory.getLogger(StudentAdminController.class);
     private static final int MAX_PAGE_SIZE = 200;
+    private static final Map<String, String> SORTABLE_FIELDS = Map.of(
+            "name", "name",
+            "registrationNumber", "registrationNumber",
+            "pinResetRequired", "pinResetRequired",
+            "createdAt", "createdAt");
 
     private final StudentManagementService studentManagementService;
     private final CsvStudentImporter csvStudentImporter;
@@ -155,15 +165,50 @@ public class StudentAdminController {
         return ResponseEntity.ok().headers(headers).body(csvBytes);
     }
 
+    public ResponseEntity<PagedResponse<List<StudentResponse>>> getAllStudents(int page, int size) {
+        return getAllStudents(page, size, null, null, null, null);
+    }
+
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPERVISOR')")
     public ResponseEntity<PagedResponse<List<StudentResponse>>> getAllStudents(
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) String credentialStatus,
+            @RequestParam(required = false) String sortBy,
+            @RequestParam(required = false) String sortDir) {
         if (page < 0 || size < 1 || size > MAX_PAGE_SIZE) {
             throw new IllegalArgumentException("Page must be >= 0 and size must be between 1 and " + MAX_PAGE_SIZE);
         }
-        Page<Student> studentPage = studentRepository.findAll(PageRequest.of(page, size));
+
+        String pattern = TableQueryUtils.toContainsPattern(search);
+        Boolean pinResetFilter = parseCredentialStatus(credentialStatus);
+        boolean hasSort = sortBy != null && !sortBy.isBlank();
+
+        Pageable pageable = hasSort
+                ? TableQueryUtils.buildPageable(
+                        page,
+                        size,
+                        sortBy,
+                        sortDir,
+                        SORTABLE_FIELDS,
+                        "name",
+                        Sort.Direction.ASC,
+                        "registrationNumber")
+                : PageRequest.of(page, size);
+
+        Page<Student> studentPage;
+        if (pattern != null && pinResetFilter != null) {
+            studentPage = studentRepository.searchByNameOrRegNumberAndPinResetRequired(pattern, pinResetFilter, pageable);
+        } else if (pattern != null) {
+            studentPage = studentRepository.searchByNameOrRegNumber(pattern, pageable);
+        } else if (pinResetFilter != null) {
+            studentPage = studentRepository.findByPinResetRequired(pinResetFilter, pageable);
+        } else {
+            studentPage = studentRepository.findAll(pageable);
+        }
+
         List<Student> content = studentPage.getContent();
         List<Boolean> activeFlags = fetchActiveSessionFlags(content);
 
@@ -179,6 +224,20 @@ public class StudentAdminController {
                 studentPage.getTotalElements(),
                 studentPage.getTotalPages());
         return ResponseEntity.ok(pagedResponse);
+    }
+
+    private Boolean parseCredentialStatus(String credentialStatus) {
+        if (credentialStatus == null || credentialStatus.isBlank() || "ALL".equalsIgnoreCase(credentialStatus.trim())) {
+            return null;
+        }
+        String normalized = credentialStatus.trim().toUpperCase(Locale.ROOT);
+        if ("RESET_REQUIRED".equals(normalized)) {
+            return Boolean.TRUE;
+        }
+        if ("HASHED".equals(normalized)) {
+            return Boolean.FALSE;
+        }
+        throw new IllegalArgumentException("Invalid credentialStatus filter: " + credentialStatus);
     }
 
     private ResponseEntity<byte[]> pdfAttachmentResponse(byte[] pdfBytes, String filename) {

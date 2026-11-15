@@ -309,10 +309,20 @@ function ExamScriptAuditModalContent({
                   </div>
                 </div>
 
-                {q.sharedContext && (
-                  <div className="p-3 bg-slate-50 border border-slate-200 rounded text-xs text-slate-700">
+                {(q.sharedContext || (q.sharedContextAssets && q.sharedContextAssets.length > 0)) && (
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded text-xs text-slate-700 space-y-2">
                     <div className="font-bold uppercase text-slate-500 mb-1">Shared Passage / Context</div>
-                    <RichText text={q.sharedContext} />
+                    {q.sharedContext && <RichText text={q.sharedContext} />}
+                    {q.sharedContextAssets?.map((asset, i) =>
+                      asset?.type?.toLowerCase() === 'image' && asset.url ? (
+                        <img
+                          key={i}
+                          src={asset.url}
+                          alt={asset.alt || asset.caption || 'Shared context diagram'}
+                          className="max-w-sm rounded border border-slate-200"
+                        />
+                      ) : null
+                    )}
                   </div>
                 )}
 

@@ -1,4 +1,5 @@
 import Dexie, { type Table } from 'dexie';
+import type { QuestionAsset } from '../types/exam';
 
 export interface LocalExamState {
   id: string; // The exam session UUID
@@ -17,6 +18,7 @@ export interface LocalExamState {
   flagged?: Record<string, boolean>;
   questions?: any[];
   contexts?: Record<string, any>;
+  contextAssets?: Record<string, QuestionAsset[]>;
   student?: { name: string; registrationNumber: string } | null;
 }
 

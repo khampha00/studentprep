@@ -10,6 +10,7 @@ public class ExamPayloadResponse {
     private Integer durationMinutes;
     private List<Object> questions;
     private Map<String, String> contexts;
+    private Map<String, List<Map<String, Object>>> contextAssets;
     private StudentProfileDto student;
 
     public UUID getExamId() {
@@ -50,6 +51,14 @@ public class ExamPayloadResponse {
 
     public void setContexts(Map<String, String> contexts) {
         this.contexts = contexts;
+    }
+
+    public Map<String, List<Map<String, Object>>> getContextAssets() {
+        return contextAssets;
+    }
+
+    public void setContextAssets(Map<String, List<Map<String, Object>>> contextAssets) {
+        this.contextAssets = contextAssets;
     }
 
     public StudentProfileDto getStudent() {

@@ -94,7 +94,7 @@ jobs:
       - name: Run Lint Checks
         run: |
           npm run lint
-          npx oxlint tests/auth-hardening.spec.ts playwright.config.ts
+          npx oxlint tests/auth-hardening.spec.ts tests/exam-kiosk-integrity.spec.ts tests/ingestion-and-audit-stabilization.spec.ts playwright.config.ts
 
       - name: Build Production Bundle
         run: npm run build
@@ -177,9 +177,9 @@ jobs:
         working-directory: ./frontend
         run: npx playwright install --with-deps chromium webkit
 
-      - name: Run Unmocked Security & Auth E2E Suite
+      - name: Run Unmocked Security, Kiosk & Stabilization E2E Suites
         working-directory: ./frontend
-        run: npx playwright test tests/auth-hardening.spec.ts --reporter=list
+        run: npx playwright test tests/auth-hardening.spec.ts tests/exam-kiosk-integrity.spec.ts tests/ingestion-and-audit-stabilization.spec.ts --reporter=list
 
       - name: Stop Backend Process
         if: always()

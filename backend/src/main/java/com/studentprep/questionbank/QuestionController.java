@@ -1,12 +1,24 @@
 package com.studentprep.questionbank;
 
-import com.studentprep.questionbank.dto.ContextLinkRequest;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-import java.util.List;
-import java.util.UUID;
 import com.studentprep.common.ApiResponse;
+import com.studentprep.questionbank.dto.ContextLinkRequest;
+import com.studentprep.questionbank.dto.ContextUpdateRequest;
+import com.studentprep.questionbank.dto.QuestionUpdateRequest;
+import jakarta.validation.Valid;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/admin/questions")
@@ -26,12 +38,10 @@ public class QuestionController {
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<ApiResponse<Question>> updateQuestionStatus(@PathVariable UUID id, @jakarta.validation.Valid @RequestBody Question updateRequest) {
-        try {
-            return ResponseEntity.ok(ApiResponse.of(questionService.updateQuestionStatus(id, updateRequest)));
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.notFound().build();
-        }
+    public ResponseEntity<ApiResponse<Question>> updateQuestionStatus(
+            @PathVariable UUID id,
+            @Valid @RequestBody QuestionUpdateRequest updateRequest) {
+        return ResponseEntity.ok(ApiResponse.of(questionService.updateQuestionStatus(id, updateRequest)));
     }
 
     @DeleteMapping("/{id}")
@@ -76,6 +86,13 @@ public class QuestionController {
         }
     }
 
+    @PutMapping("/contexts/{contextId}")
+    public ResponseEntity<ApiResponse<QuestionContext>> updateContext(
+            @PathVariable UUID contextId,
+            @Valid @RequestBody ContextUpdateRequest updateRequest) {
+        return ResponseEntity.ok(ApiResponse.of(questionService.updateContext(contextId, updateRequest)));
+    }
+
     @PostMapping("/contexts/{contextId}/ungroup")
     public ResponseEntity<ApiResponse<Map<String, String>>> ungroupContext(@PathVariable UUID contextId) {
         questionService.ungroupContext(contextId);
@@ -83,7 +100,7 @@ public class QuestionController {
     }
 
     @PostMapping("/{id}/link")
-    public ResponseEntity<ApiResponse<Question>> linkQuestion(@PathVariable UUID id, @jakarta.validation.Valid @RequestBody ContextLinkRequest req) {
+    public ResponseEntity<ApiResponse<Question>> linkQuestion(@PathVariable UUID id, @Valid @RequestBody ContextLinkRequest req) {
         try {
             return ResponseEntity.ok(ApiResponse.of(questionService.linkQuestion(id, req)));
         } catch (IllegalArgumentException e) {

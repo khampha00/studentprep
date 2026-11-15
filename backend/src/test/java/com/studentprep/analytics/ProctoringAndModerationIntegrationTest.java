@@ -341,6 +341,10 @@ class ProctoringAndModerationIntegrationTest {
 
         Map<String, Object> snapshotPayload = Map.of(
                 "contexts", Map.of("ctx-1", "Read the motion graph carefully."),
+                "contextAssets", Map.of("ctx-1", List.of(Map.of(
+                        "type", "image",
+                        "url", "http://localhost:9000/studentprep-assets/diagrams/motion-graph.png"
+                ))),
                 "questions", List.of(
                         Map.of(
                                 "id", "q-math-1",
@@ -420,7 +424,11 @@ class ProctoringAndModerationIntegrationTest {
                 .andExpect(jsonPath("$.data.incorrectCount").value(1))
                 .andExpect(jsonPath("$.data.unansweredCount").value(1))
                 .andExpect(jsonPath("$.data.questions[0].outcome").value("CORRECT"))
+                .andExpect(jsonPath("$.data.questions[0].sharedContextAssets").isEmpty())
                 .andExpect(jsonPath("$.data.questions[1].outcome").value("INCORRECT"))
+                .andExpect(jsonPath("$.data.questions[1].sharedContext").value("Read the motion graph carefully."))
+                .andExpect(jsonPath("$.data.questions[1].sharedContextAssets[0].url")
+                        .value("http://localhost:9000/studentprep-assets/diagrams/motion-graph.png"))
                 .andExpect(jsonPath("$.data.questions[1].flagged").value(true))
                 .andExpect(jsonPath("$.data.questions[2].outcome").value("UNANSWERED"));
 

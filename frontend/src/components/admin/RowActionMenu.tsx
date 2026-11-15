@@ -1,4 +1,5 @@
 import type { MouseEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { MoreVertical } from 'lucide-react';
 import type { OpenMenuState, RowActionMenuItem } from '../../hooks/useRowActionMenu';
 
@@ -45,44 +46,47 @@ export function RowActionMenu({
         <MoreVertical className="w-4 h-4" />
       </button>
 
-      {isOpen && openMenu && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={onClose} />
-          <div
-            role="menu"
-            style={{ top: openMenu.top, right: openMenu.right }}
-            className="fixed z-50 w-48 rounded-lg border border-slate-200 bg-white py-1.5 shadow-lg text-left"
-          >
-            {items.map((item) => {
-              const toneClass = TONE_CLASSES[item.tone || 'default'];
-              return (
-                <div key={item.key}>
-                  {item.dividerBefore && <div className="my-1 border-t border-slate-100" />}
-                  <button
-                    type="button"
-                    role="menuitem"
-                    disabled={item.disabled}
-                    data-testid={item.testId}
-                    title={item.title}
-                    onClick={() => {
-                      onClose();
-                      item.onClick();
-                    }}
-                    className={`w-full px-3.5 py-2 text-xs font-semibold flex items-center gap-2 transition-colors ${toneClass} ${
-                      item.disabled
-                        ? 'opacity-40 cursor-not-allowed'
-                        : 'cursor-pointer'
-                    }`}
-                  >
-                    {item.icon}
-                    {item.label}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        </>
-      )}
+      {isOpen &&
+        openMenu &&
+        createPortal(
+          <>
+            <div className="fixed inset-0 z-40" onClick={onClose} />
+            <div
+              role="menu"
+              style={{ top: openMenu.top, right: openMenu.right }}
+              className="fixed z-50 w-48 rounded-lg border border-slate-200 bg-white py-1.5 shadow-lg text-left"
+            >
+              {items.map((item) => {
+                const toneClass = TONE_CLASSES[item.tone || 'default'];
+                return (
+                  <div key={item.key}>
+                    {item.dividerBefore && <div className="my-1 border-t border-slate-100" />}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={item.disabled}
+                      data-testid={item.testId}
+                      title={item.title}
+                      onClick={() => {
+                        onClose();
+                        item.onClick();
+                      }}
+                      className={`w-full px-3.5 py-2 text-xs font-semibold flex items-center gap-2 transition-colors ${toneClass} ${
+                        item.disabled
+                          ? 'opacity-40 cursor-not-allowed'
+                          : 'cursor-pointer'
+                      }`}
+                    >
+                      {item.icon}
+                      {item.label}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </>,
+          document.body
+        )}
     </>
   );
 }

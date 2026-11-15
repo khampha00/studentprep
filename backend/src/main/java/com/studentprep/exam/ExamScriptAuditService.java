@@ -125,6 +125,7 @@ public class ExamScriptAuditService {
         }
 
         Map<String, String> contexts = extractContexts(snapshot);
+        Map<String, List<Map<String, Object>>> contextAssets = extractContextAssets(snapshot);
         Map<String, Object> statePayload = session.getStatePayload();
         Map<String, String> answers = extractAnswers(statePayload);
         Set<String> flaggedIds = extractFlaggedIds(statePayload);
@@ -158,6 +159,7 @@ public class ExamScriptAuditService {
                 String subjectName = extractSubjectName(qMap);
                 String topic = extractTopic(qMap);
                 String sharedContext = extractSharedContext(qMap, contexts);
+                List<Map<String, Object>> sharedContextAssets = extractSharedContextAssets(qMap, contextAssets);
                 String prompt = extractPrompt(qMap);
                 List<Map<String, Object>> assets = extractAssets(qMap);
                 Map<String, String> options = extractOptions(qMap);
@@ -205,6 +207,7 @@ public class ExamScriptAuditService {
                         subjectName,
                         topic,
                         sharedContext,
+                        sharedContextAssets,
                         prompt,
                         assets,
                         options,
@@ -683,6 +686,19 @@ public class ExamScriptAuditService {
         return result;
     }
 
+    private static Map<String, List<Map<String, Object>>> extractContextAssets(Map<String, Object> snapshot) {
+        if (snapshot == null || !(snapshot.get("contextAssets") instanceof Map<?, ?> ctxAssetsMap)) {
+            return Collections.emptyMap();
+        }
+        Map<String, List<Map<String, Object>>> result = new HashMap<>();
+        for (Map.Entry<?, ?> entry : ctxAssetsMap.entrySet()) {
+            if (entry.getKey() != null && entry.getValue() instanceof List<?> rawList) {
+                result.put(entry.getKey().toString(), copyAssetMapList(rawList));
+            }
+        }
+        return result;
+    }
+
     private static Map<String, String> extractAnswers(Map<String, Object> statePayload) {
         if (statePayload == null) {
             return Collections.emptyMap();
@@ -778,6 +794,17 @@ public class ExamScriptAuditService {
         return null;
     }
 
+    private static List<Map<String, Object>> extractSharedContextAssets(
+            Map<?, ?> qMap,
+            Map<String, List<Map<String, Object>>> contextAssets
+    ) {
+        String contextId = extractString(qMap.get("contextId"));
+        if (contextId != null && contextAssets.containsKey(contextId)) {
+            return contextAssets.get(contextId);
+        }
+        return Collections.emptyList();
+    }
+
     private static String extractPrompt(Map<?, ?> qMap) {
         Object contentObj = qMap.get("content");
         if (contentObj instanceof Map<?, ?> cm) {
@@ -797,21 +824,28 @@ public class ExamScriptAuditService {
     private static List<Map<String, Object>> extractAssets(Map<?, ?> qMap) {
         Object contentObj = qMap.get("content");
         if (contentObj instanceof Map<?, ?> cm && cm.get("assets") instanceof List<?> rawList) {
-            List<Map<String, Object>> assets = new ArrayList<>();
-            for (Object item : rawList) {
-                if (item instanceof Map<?, ?> assetMap) {
-                    Map<String, Object> copy = new LinkedHashMap<>();
-                    for (Map.Entry<?, ?> e : assetMap.entrySet()) {
-                        if (e.getKey() != null) {
-                            copy.put(e.getKey().toString(), e.getValue());
-                        }
-                    }
-                    assets.add(copy);
-                }
-            }
-            return assets;
+            return copyAssetMapList(rawList);
         }
         return Collections.emptyList();
+    }
+
+    private static List<Map<String, Object>> copyAssetMapList(List<?> rawList) {
+        if (rawList == null) {
+            return Collections.emptyList();
+        }
+        List<Map<String, Object>> assets = new ArrayList<>();
+        for (Object item : rawList) {
+            if (item instanceof Map<?, ?> assetMap) {
+                Map<String, Object> copy = new LinkedHashMap<>();
+                for (Map.Entry<?, ?> e : assetMap.entrySet()) {
+                    if (e.getKey() != null) {
+                        copy.put(e.getKey().toString(), e.getValue());
+                    }
+                }
+                assets.add(copy);
+            }
+        }
+        return assets;
     }
 
     private static Map<String, String> extractOptions(Map<?, ?> qMap) {
@@ -905,6 +939,7 @@ public class ExamScriptAuditService {
             String subjectName,
             String topic,
             String sharedContext,
+            List<Map<String, Object>> sharedContextAssets,
             String prompt,
             List<Map<String, Object>> assets,
             Map<String, String> options,

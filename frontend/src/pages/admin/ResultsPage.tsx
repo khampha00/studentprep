@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import axios from 'axios';
 import { toast } from 'sonner';
 import {
@@ -13,7 +13,18 @@ import {
   buildResultSlipFilename,
   triggerPdfResponseDownload,
 } from '../../lib/pdf';
-import { getStoredToken, decodeJwtPayload } from '../../lib/auth';
+import {
+  getStoredToken,
+  decodeJwtPayload,
+  extractProblemMessage,
+} from '../../lib/auth';
+import {
+  DataTable,
+  type DataTableColumn,
+  type DataTableFilterConfig,
+  type DataTableServerQuery,
+} from '../../components/ui/data-table';
+import type { PageMeta } from '../../types/student';
 import { RowActionMenu } from '../../components/admin/RowActionMenu';
 import {
   useRowActionMenu,
@@ -26,6 +37,8 @@ import {
   type FlaggedSession,
 } from '../../components/admin/FlaggedSessionsCard';
 
+const RESULTS_PAGE_SIZE = 20;
+
 interface TopicStat {
   correct: number;
   total: number;
@@ -37,11 +50,37 @@ interface ParsedSubject {
   topics: { name: string; correct: number; total: number }[];
 }
 
+interface ExamResultRow {
+  id: string;
+  examSessionId?: string;
+  studentName: string;
+  registrationNumber?: string;
+  totalScore: number;
+  maxScore: number;
+  topicBreakdown?: Record<string, TopicStat>;
+  gradedAt?: string;
+  moderationStatus?: string;
+  sessionStatus?: string;
+  answerReceiptCode?: string;
+}
+
+type ResultsPageMeta = PageMeta & { number?: number };
+
 export default function ResultsPage() {
-  const [results, setResults] = useState<any[]>([]);
+  const [results, setResults] = useState<ExamResultRow[]>([]);
+  const [meta, setMeta] = useState<ResultsPageMeta | null>(null);
+  const [query, setQuery] = useState<DataTableServerQuery>({
+    page: 0,
+    pageSize: RESULTS_PAGE_SIZE,
+    search: '',
+    filters: {},
+    sortKey: null,
+    sortDirection: 'desc',
+  });
   const [flaggedSessions, setFlaggedSessions] = useState<FlaggedSession[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedResult, setSelectedResult] = useState<any>(null);
+  const [isFetchingPage, setIsFetchingPage] = useState(false);
+  const [selectedResult, setSelectedResult] = useState<ExamResultRow | null>(null);
   const [moderatingId, setModeratingId] = useState<string | null>(null);
 
   const { openMenu, toggleMenu, closeMenu } = useRowActionMenu();
@@ -68,23 +107,78 @@ export default function ResultsPage() {
       .catch(() => {});
   }, []);
 
-  const fetchResults = useCallback(() => {
-    axios.get('/api/v1/admin/analytics/results')
-      .then(res => {
-        setResults(res.data.data);
-      })
-      .catch(() => {
-        toast.error('Failed to load results');
-      })
-      .finally(() => {
-        setLoading(false);
-      });
+  const buildResultsUrl = useCallback((q: DataTableServerQuery) => {
+    const params = new URLSearchParams({
+      page: String(q.page),
+      size: String(q.pageSize),
+    });
+    if (q.search.trim()) {
+      params.set('search', q.search.trim());
+    }
+    const moderationFilter = q.filters.moderationStatus;
+    if (moderationFilter && moderationFilter !== 'ALL') {
+      params.set('moderationStatus', moderationFilter);
+    }
+    if (q.sortKey) {
+      params.set('sortBy', q.sortKey);
+      params.set('sortDir', q.sortDirection);
+    }
+    return `/api/v1/admin/analytics/results?${params.toString()}`;
   }, []);
 
+  const fetchResults = useCallback(async (targetQuery: DataTableServerQuery = query) => {
+    setIsFetchingPage(true);
+    try {
+      const res = await axios.get(buildResultsUrl(targetQuery));
+      const rows = Array.isArray(res.data?.data) ? (res.data.data as ExamResultRow[]) : [];
+      const pageMeta = (res.data?.meta as ResultsPageMeta | undefined) ?? null;
+      setResults(rows);
+      setMeta(pageMeta);
+      if (pageMeta && pageMeta.totalPages > 0 && targetQuery.page >= pageMeta.totalPages) {
+        setQuery((prev) => ({ ...prev, page: Math.max(0, pageMeta.totalPages - 1) }));
+      }
+    } catch (err: unknown) {
+      toast.error(extractProblemMessage(err, 'Failed to load results'));
+    } finally {
+      setLoading(false);
+      setIsFetchingPage(false);
+    }
+  }, [buildResultsUrl, query]);
+
   useEffect(() => {
-    fetchResults();
+    let active = true;
+    axios
+      .get(buildResultsUrl(query))
+      .then((res) => {
+        if (!active) return;
+        const rows = Array.isArray(res.data?.data) ? (res.data.data as ExamResultRow[]) : [];
+        const pageMeta = (res.data?.meta as ResultsPageMeta | undefined) ?? null;
+        setResults(rows);
+        setMeta(pageMeta);
+        if (pageMeta && pageMeta.totalPages > 0 && query.page >= pageMeta.totalPages) {
+          setQuery((prev) => ({ ...prev, page: Math.max(0, pageMeta.totalPages - 1) }));
+        }
+      })
+      .catch((err: unknown) => {
+        if (active) {
+          toast.error(extractProblemMessage(err, 'Failed to load results'));
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setLoading(false);
+          setIsFetchingPage(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [buildResultsUrl, query]);
+
+  useEffect(() => {
     fetchFlaggedSessions();
-  }, [fetchResults, fetchFlaggedSessions]);
+  }, [fetchFlaggedSessions]);
 
   const handleClearLate = async (sessionId: string) => {
     setModeratingId(sessionId);
@@ -92,9 +186,9 @@ export default function ResultsPage() {
       await axios.post(`/api/v1/admin/exams/sessions/${sessionId}/clear-late`);
       toast.success('Late submission cleared.');
       fetchFlaggedSessions();
-      fetchResults();
-    } catch (err: any) {
-      toast.error(err?.response?.data?.detail || 'Failed to clear late submission.');
+      void fetchResults(query);
+    } catch (err: unknown) {
+      toast.error(extractProblemMessage(err, 'Failed to clear late submission.'));
     } finally {
       setModeratingId(null);
     }
@@ -106,9 +200,9 @@ export default function ResultsPage() {
       await axios.post(`/api/v1/admin/exams/sessions/${sessionId}/void`);
       toast.success('Session voided.');
       fetchFlaggedSessions();
-      fetchResults();
-    } catch (err: any) {
-      toast.error(err?.response?.data?.detail || 'Failed to void session.');
+      void fetchResults(query);
+    } catch (err: unknown) {
+      toast.error(extractProblemMessage(err, 'Failed to void session.'));
     } finally {
       setModeratingId(null);
     }
@@ -120,9 +214,9 @@ export default function ResultsPage() {
       await axios.post(`/api/v1/admin/students/${studentId}/grant-retake`);
       toast.success('Retake granted.');
       fetchFlaggedSessions();
-      fetchResults();
-    } catch (err: any) {
-      toast.error(err?.response?.data?.detail || 'Failed to grant retake.');
+      void fetchResults(query);
+    } catch (err: unknown) {
+      toast.error(extractProblemMessage(err, 'Failed to grant retake.'));
     } finally {
       setModeratingId(null);
     }
@@ -188,7 +282,7 @@ export default function ResultsPage() {
     return subjects;
   };
 
-  const buildResultItems = (result: any, isSlipBlocked: boolean): RowActionMenuItem[] => {
+  const buildResultItems = (result: ExamResultRow, isSlipBlocked: boolean): RowActionMenuItem[] => {
     const items: RowActionMenuItem[] = [
       {
         key: 'breakdown',
@@ -198,26 +292,27 @@ export default function ResultsPage() {
       },
     ];
 
-    if (result.examSessionId) {
+    const sessionId = result.examSessionId;
+    if (sessionId) {
       items.push(
         {
           key: 'inspect-script',
-          label: loadingScriptId === result.examSessionId ? 'Loading...' : 'Inspect Script',
+          label: loadingScriptId === sessionId ? 'Loading...' : 'Inspect Script',
           icon: <Eye className="w-3.5 h-3.5 text-[#008751]" />,
-          disabled: loadingScriptId === result.examSessionId,
-          testId: `inspect-script-${result.examSessionId}`,
-          onClick: () => inspectScript(result.examSessionId),
+          disabled: loadingScriptId === sessionId,
+          testId: `inspect-script-${sessionId}`,
+          onClick: () => inspectScript(sessionId),
         },
         {
           key: 'script-pdf',
           label: 'Script (PDF)',
           icon: <Download className="w-3.5 h-3.5" />,
           tone: 'emerald',
-          disabled: downloadingScriptId === result.examSessionId,
-          testId: `download-script-${result.examSessionId}`,
+          disabled: downloadingScriptId === sessionId,
+          testId: `download-script-${sessionId}`,
           onClick: () =>
             downloadExamScript(
-              result.examSessionId,
+              sessionId,
               result.studentName,
               result.registrationNumber
             ),
@@ -246,6 +341,129 @@ export default function ResultsPage() {
 
     return items;
   };
+
+  const currentPage =
+    meta && typeof meta.page === 'number'
+      ? meta.page
+      : meta && typeof meta.number === 'number'
+      ? meta.number
+      : query.page;
+  const totalPages = meta ? Math.max(1, meta.totalPages) : 1;
+
+  const resultFilters: DataTableFilterConfig<ExamResultRow>[] = useMemo(
+    () => [
+      {
+        key: 'moderationStatus',
+        label: 'Moderation',
+        options: [
+          { value: 'ELIGIBLE', label: 'Eligible' },
+          { value: 'PENDING_REVIEW', label: 'Pending Review' },
+          { value: 'CLEARED', label: 'Cleared' },
+          { value: 'VOIDED', label: 'Voided' },
+        ],
+      },
+    ],
+    []
+  );
+
+  const resultColumns: DataTableColumn<ExamResultRow>[] = [
+    {
+      key: 'studentName',
+      header: 'Candidate Name',
+      sortable: true,
+      sortType: 'text',
+      render: (result) => (
+        <span className="font-semibold text-slate-900">{result.studentName}</span>
+      ),
+    },
+    {
+      key: 'registrationNumber',
+      header: 'Reg No',
+      sortable: true,
+      sortType: 'text',
+      render: (result) => (
+        <span className="font-mono text-xs text-slate-600">
+          {result.registrationNumber || '—'}
+        </span>
+      ),
+    },
+    {
+      key: 'totalScore',
+      header: 'Total Score',
+      sortable: true,
+      sortType: 'number',
+      render: (result) => (
+        <span className="font-bold text-slate-900 tabular-nums">
+          {result.totalScore}{' '}
+          <span className="text-xs font-normal text-slate-500">/ {result.maxScore}</span>
+        </span>
+      ),
+    },
+    {
+      key: 'percentage',
+      header: 'Percentage',
+      render: (result) => {
+        const percentage =
+          result.maxScore > 0 ? ((result.totalScore / result.maxScore) * 100).toFixed(1) : '0.0';
+        return (
+          <span className="inline-block px-2.5 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold rounded-full tabular-nums">
+            {percentage}%
+          </span>
+        );
+      },
+    },
+    {
+      key: 'answerReceiptCode',
+      header: 'Answer Receipt',
+      render: (result) => (
+        <span className="font-mono text-xs text-slate-700">
+          {result.answerReceiptCode || '—'}
+        </span>
+      ),
+    },
+    {
+      key: 'moderationStatus',
+      header: 'Moderation',
+      sortable: true,
+      sortType: 'text',
+      render: (result) => (
+        <span
+          className={`inline-block px-2 py-0.5 text-xs font-bold rounded-full border ${
+            result.moderationStatus === 'PENDING_REVIEW'
+              ? 'bg-amber-50 text-amber-800 border-amber-200'
+              : result.moderationStatus === 'VOIDED'
+              ? 'bg-red-50 text-red-800 border-red-200'
+              : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+          }`}
+        >
+          {result.moderationStatus || 'ELIGIBLE'}
+        </span>
+      ),
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      align: 'right',
+      hideLabelOnMobile: true,
+      render: (result, idx) => {
+        const isSlipBlocked =
+          !isAdmin ||
+          result.moderationStatus === 'PENDING_REVIEW' ||
+          result.moderationStatus === 'VOIDED';
+        return (
+          <RowActionMenu
+            menuId={`result-${result.id || idx}`}
+            openMenu={openMenu}
+            onToggle={toggleMenu}
+            onClose={closeMenu}
+            ariaLabel="Result actions"
+            testId={`result-actions-${result.id || idx}`}
+            items={buildResultItems(result, isSlipBlocked)}
+          />
+        );
+      },
+    },
+  ];
 
   return (
     <div className="p-8 font-sans bg-slate-50 min-h-screen space-y-8">
@@ -276,84 +494,45 @@ export default function ResultsPage() {
       />
 
       <div>
-        <h2 className="text-xl font-bold text-slate-900 mb-4">Completed Exam Results</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+          <h2 className="text-xl font-bold text-slate-900">Completed Exam Results</h2>
+          {meta && (
+            <span className="text-xs font-medium text-slate-600">
+              {meta.totalElements} total result{meta.totalElements === 1 ? '' : 's'}
+            </span>
+          )}
+        </div>
 
-        {loading ? (
-          <div className="text-slate-500">Loading results...</div>
-        ) : (
-          <div className="overflow-x-auto border border-slate-200 rounded-lg bg-white shadow-xs">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-100/70 border-b border-slate-200 text-xs font-semibold text-slate-700">
-                  <th className="p-4">Candidate Name</th>
-                  <th className="p-4">Reg No</th>
-                  <th className="p-4">Total Score</th>
-                  <th className="p-4">Percentage</th>
-                  <th className="p-4">Answer Receipt</th>
-                  <th className="p-4">Moderation</th>
-                  <th className="p-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {results.map((result, idx) => {
-                  const percentage = result.maxScore > 0 ? ((result.totalScore / result.maxScore) * 100).toFixed(1) : '0.0';
-                  const isSlipBlocked = !isAdmin || result.moderationStatus === 'PENDING_REVIEW' || result.moderationStatus === 'VOIDED';
-                  return (
-                    <tr key={result.id || idx} className="hover:bg-slate-50 transition-colors">
-                      <td className="p-4 font-semibold text-slate-900">{result.studentName}</td>
-                      <td className="p-4 font-mono text-xs text-slate-600">{result.registrationNumber || '—'}</td>
-                      <td className="p-4 font-bold text-slate-900">
-                        {result.totalScore} <span className="text-xs font-normal text-slate-500">/ {result.maxScore}</span>
-                      </td>
-                      <td className="p-4">
-                        <span className="inline-block px-2.5 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold rounded-full">
-                          {percentage}%
-                        </span>
-                      </td>
-                      <td className="p-4 font-mono text-xs text-slate-700">
-                        {result.answerReceiptCode || '—'}
-                      </td>
-                      <td className="p-4">
-                        <span className={`inline-block px-2 py-0.5 text-xs font-bold rounded-full border ${
-                          result.moderationStatus === 'PENDING_REVIEW'
-                            ? 'bg-amber-50 text-amber-800 border-amber-200'
-                            : result.moderationStatus === 'VOIDED'
-                            ? 'bg-red-50 text-red-800 border-red-200'
-                            : 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                        }`}>
-                          {result.moderationStatus || 'ELIGIBLE'}
-                        </span>
-                      </td>
-                      <td className="p-4 text-right">
-                        <RowActionMenu
-                          menuId={`result-${result.id || idx}`}
-                          openMenu={openMenu}
-                          onToggle={toggleMenu}
-                          onClose={closeMenu}
-                          ariaLabel="Result actions"
-                          testId={`result-actions-${result.id || idx}`}
-                          items={buildResultItems(result, isSlipBlocked)}
-                        />
-                      </td>
-                    </tr>
-                  );
-                })}
-                {results.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="p-8 text-center text-slate-500 text-sm">
-                      No results recorded yet. Completed exams will appear here.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <DataTable
+          caption="Completed Exam Results"
+          data={results}
+          columns={resultColumns}
+          getRowKey={(result, idx) => result.id || String(idx)}
+          mode="server"
+          loading={loading || isFetchingPage}
+          loadingMessage="Loading results..."
+          emptyMessage="No results recorded yet. Completed exams will appear here."
+          itemLabel={['result', 'results']}
+          searchPlaceholder="Search candidate name or reg no..."
+          filters={resultFilters}
+          page={currentPage}
+          pageSize={query.pageSize}
+          totalElements={meta?.totalElements ?? results.length}
+          totalPages={totalPages}
+          search={query.search}
+          filterValues={query.filters}
+          sortKey={query.sortKey}
+          sortDirection={query.sortDirection}
+          onQueryChange={(nextQuery) => {
+            setIsFetchingPage(true);
+            setQuery(nextQuery);
+          }}
+        />
       </div>
 
       {/* Formatted Performance & Topic Breakdown Modal */}
       {selectedResult && (() => {
-        const parsed = parseBreakdown(selectedResult.topicBreakdown);
+        const parsed = parseBreakdown(selectedResult.topicBreakdown || {});
         const percentage = selectedResult.maxScore > 0
           ? ((selectedResult.totalScore / selectedResult.maxScore) * 100).toFixed(1)
           : '0.0';
@@ -468,6 +647,7 @@ export default function ResultsPage() {
                       type="button"
                       onClick={() => {
                         const sid = selectedResult.examSessionId;
+                        if (!sid) return;
                         setSelectedResult(null);
                         inspectScript(sid);
                       }}

@@ -74,6 +74,7 @@ public class ExamPayloadGenerator {
         }
 
         Map<String, String> contextsMap = new HashMap<>();
+        Map<String, List<Map<String, Object>>> contextAssetsMap = new HashMap<>();
         Map<String, List<Map<String, Object>>> groupedQuestions = new LinkedHashMap<>();
         List<Map<String, Object>> standaloneQuestions = new ArrayList<>();
 
@@ -100,6 +101,10 @@ public class ExamPayloadGenerator {
                 map.put("contextId", ctxId);
                 if (q.getContext().getPassage() != null) {
                     contextsMap.put(ctxId, q.getContext().getPassage());
+                }
+                List<Map<String, Object>> rawCtxAssets = q.getContext().getAssets();
+                if (rawCtxAssets != null && !rawCtxAssets.isEmpty()) {
+                    contextAssetsMap.put(ctxId, copyAssetList(rawCtxAssets));
                 }
                 groupedQuestions.computeIfAbsent(ctxId, k -> new ArrayList<>()).add(map);
             } else {
@@ -138,6 +143,7 @@ public class ExamPayloadGenerator {
         snapshot.put("durationMinutes", (int) timingProperties.getDurationMinutes());
         snapshot.put("questions", rawQuestions);
         snapshot.put("contexts", contextsMap);
+        snapshot.put("contextAssets", contextAssetsMap);
         if (student != null) {
             Map<String, String> studentMap = new HashMap<>();
             studentMap.put("name", student.getName());
@@ -166,6 +172,8 @@ public class ExamPayloadGenerator {
         if (contexts == null) {
             contexts = Collections.emptyMap();
         }
+
+        Map<String, List<Map<String, Object>>> contextAssets = extractContextAssets(snapshotPayload.get("contextAssets"));
 
         int durationMinutes = (int) timingProperties.getDurationMinutes();
         Object durObj = snapshotPayload.get("durationMinutes");
@@ -205,11 +213,36 @@ public class ExamPayloadGenerator {
         response.setDurationMinutes(durationMinutes);
         response.setQuestions(strippedQuestions);
         response.setContexts(contexts);
+        response.setContextAssets(contextAssets);
         if (studentProfile != null) {
             response.setStudent(studentProfile);
         }
 
         return response;
+    }
+
+    private static List<Map<String, Object>> copyAssetList(List<Map<String, Object>> rawAssets) {
+        List<Map<String, Object>> copied = new ArrayList<>();
+        if (rawAssets == null) {
+            return copied;
+        }
+        for (Map<String, Object> asset : rawAssets) {
+            if (asset != null && !asset.isEmpty()) {
+                copied.add(new LinkedHashMap<>(asset));
+            }
+        }
+        return copied;
+    }
+
+    private Map<String, List<Map<String, Object>>> extractContextAssets(Object rawAssetsObj) {
+        if (rawAssetsObj == null) {
+            return Collections.emptyMap();
+        }
+        Map<String, List<Map<String, Object>>> cloned = objectMapper.convertValue(
+                rawAssetsObj,
+                new TypeReference<Map<String, List<Map<String, Object>>>>() {}
+        );
+        return cloned != null ? cloned : Collections.emptyMap();
     }
 
     @Transactional(readOnly = true)
